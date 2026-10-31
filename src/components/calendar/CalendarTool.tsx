@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { db, handleFirestoreError, OperationType } from '../../lib/firebase';
+import { auth, db, handleFirestoreError, OperationType } from '../../lib/firebase';
 import {
   collection,
   query,
@@ -81,7 +81,7 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
     }
   };
 
-  // Firestore Real-Time listener for events
+  // Real-Time listener for events (Cloud Firestore or Local Database)
   useEffect(() => {
     if (!user) {
       setEvents([]);
@@ -89,6 +89,24 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
       return;
     }
 
+    // Local authenticated user
+    if (!auth.currentUser) {
+      const userKey = `bashar_events_${user.uid}`;
+      const saved = localStorage.getItem(userKey);
+      if (saved) {
+        try {
+          const items: CalendarEvent[] = JSON.parse(saved);
+          items.sort((a, b) => (a.date + (a.startTime || '')).localeCompare(b.date + (b.startTime || '')));
+          setEvents(items);
+        } catch (e) {}
+      } else {
+        setEvents([]);
+      }
+      setLoading(false);
+      return;
+    }
+
+    // Cloud Firestore user
     setLoading(true);
     const eventsPath = `users/${user.uid}/calendarEvents`;
     const q = query(collection(db, 'users', user.uid, 'calendarEvents'));
@@ -182,22 +200,53 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
 
     if (!title.trim()) return;
 
+    const userKey = `bashar_events_${user.uid}`;
+    const nowIso = new Date().toISOString();
+
     try {
       if (editingEventId) {
-        const docRef = doc(db, 'users', user.uid, 'calendarEvents', editingEventId);
-        await updateDoc(docRef, {
-          title: title.trim(),
-          description: description.trim(),
-          date: eventDate,
-          startTime,
-          endTime,
-          priority,
-          category,
-          color,
-          updatedAt: new Date().toISOString(),
-        });
+        if (auth.currentUser) {
+          const docRef = doc(db, 'users', user.uid, 'calendarEvents', editingEventId);
+          await updateDoc(docRef, {
+            title: title.trim(),
+            description: description.trim(),
+            date: eventDate,
+            startTime,
+            endTime,
+            priority,
+            category,
+            color,
+            updatedAt: nowIso,
+          });
+        } else {
+          setEvents((prev) => {
+            const next = prev.map((ev) =>
+              ev.id === editingEventId
+                ? {
+                    ...ev,
+                    title: title.trim(),
+                    description: description.trim(),
+                    date: eventDate,
+                    startTime,
+                    endTime,
+                    priority,
+                    category,
+                    color,
+                    updatedAt: nowIso,
+                  }
+                : ev
+            );
+            next.sort((a, b) => (a.date + (a.startTime || '')).localeCompare(b.date + (b.startTime || '')));
+            try {
+              localStorage.setItem(userKey, JSON.stringify(next));
+            } catch (err) {}
+            return next;
+          });
+        }
       } else {
-        await addDoc(collection(db, 'users', user.uid, 'calendarEvents'), {
+        const newEventId = 'ev_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+        const newEvent: CalendarEvent = {
+          id: newEventId,
           userId: user.uid,
           title: title.trim(),
           description: description.trim(),
@@ -208,9 +257,36 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
           status: 'pending' as EventStatus,
           category,
           color,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+
+        if (auth.currentUser) {
+          const docRef = await addDoc(collection(db, 'users', user.uid, 'calendarEvents'), {
+            userId: user.uid,
+            title: newEvent.title,
+            description: newEvent.description,
+            date: newEvent.date,
+            startTime: newEvent.startTime,
+            endTime: newEvent.endTime,
+            priority: newEvent.priority,
+            status: newEvent.status,
+            category: newEvent.category,
+            color: newEvent.color,
+            createdAt: newEvent.createdAt,
+            updatedAt: newEvent.updatedAt,
+          });
+          newEvent.id = docRef.id;
+        } else {
+          setEvents((prev) => {
+            const next = [...prev, newEvent];
+            next.sort((a, b) => (a.date + (a.startTime || '')).localeCompare(b.date + (b.startTime || '')));
+            try {
+              localStorage.setItem(userKey, JSON.stringify(next));
+            } catch (err) {}
+            return next;
+          });
+        }
       }
       setIsModalOpen(false);
     } catch (err) {
@@ -222,24 +298,48 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
   const handleToggleStatus = async (event: CalendarEvent) => {
     if (!user) return;
     const nextStatus: EventStatus = event.status === 'completed' ? 'pending' : 'completed';
-    try {
-      const docRef = doc(db, 'users', user.uid, 'calendarEvents', event.id);
-      await updateDoc(docRef, {
-        status: nextStatus,
-        updatedAt: new Date().toISOString(),
+    const nowIso = new Date().toISOString();
+
+    if (auth.currentUser) {
+      try {
+        const docRef = doc(db, 'users', user.uid, 'calendarEvents', event.id);
+        await updateDoc(docRef, {
+          status: nextStatus,
+          updatedAt: nowIso,
+        });
+      } catch (err) {
+        console.error('Failed to toggle event status:', err);
+      }
+    } else {
+      const userKey = `bashar_events_${user.uid}`;
+      setEvents((prev) => {
+        const next = prev.map((ev) => (ev.id === event.id ? { ...ev, status: nextStatus, updatedAt: nowIso } : ev));
+        try {
+          localStorage.setItem(userKey, JSON.stringify(next));
+        } catch (err) {}
+        return next;
       });
-    } catch (err) {
-      console.error('Failed to toggle event status:', err);
     }
   };
 
   // Delete Event
   const handleDeleteEvent = async (eventId: string) => {
     if (!user) return;
-    try {
-      await deleteDoc(doc(db, 'users', user.uid, 'calendarEvents', eventId));
-    } catch (err) {
-      console.error('Failed to delete event:', err);
+    if (auth.currentUser) {
+      try {
+        await deleteDoc(doc(db, 'users', user.uid, 'calendarEvents', eventId));
+      } catch (err) {
+        console.error('Failed to delete event:', err);
+      }
+    } else {
+      const userKey = `bashar_events_${user.uid}`;
+      setEvents((prev) => {
+        const next = prev.filter((ev) => ev.id !== eventId);
+        try {
+          localStorage.setItem(userKey, JSON.stringify(next));
+        } catch (err) {}
+        return next;
+      });
     }
   };
 

@@ -36,13 +36,14 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
     onClose();
   };
 
-  const formattedDate = user.metadata?.creationTime
-    ? new Date(user.metadata.creationTime).toLocaleDateString('bn-BD', {
+  const creationRaw = (user as any)?.metadata?.creationTime || profile?.createdAt;
+  const formattedDate = creationRaw
+    ? new Date(creationRaw).toLocaleDateString('bn-BD', {
         year: 'numeric',
         month: 'long',
         day: 'numeric',
       })
-    : 'সংরক্ষিত';
+    : 'নিবন্ধিত সদস্য';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">

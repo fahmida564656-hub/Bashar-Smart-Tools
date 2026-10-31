@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { db, handleFirestoreError, OperationType } from '../../lib/firebase';
+import { auth, db, handleFirestoreError, OperationType } from '../../lib/firebase';
 import { collection, query, orderBy, getDocs, addDoc, deleteDoc, doc } from 'firebase/firestore';
 import { QUIZ_CATEGORIES, DEFAULT_QUESTIONS } from '../../data/quizQuestions';
 import { QuizQuestion, QuizAttempt } from '../../types';
@@ -50,6 +50,23 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
   const loadHistory = async () => {
     if (!user) return;
     setLoadingHistory(true);
+
+    if (!auth.currentUser) {
+      const userKey = `bashar_quiz_${user.uid}`;
+      const saved = localStorage.getItem(userKey);
+      if (saved) {
+        try {
+          const items: QuizAttempt[] = JSON.parse(saved);
+          items.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+          setHistoryList(items);
+        } catch (e) {}
+      } else {
+        setHistoryList([]);
+      }
+      setLoadingHistory(false);
+      return;
+    }
+
     try {
       const q = query(
         collection(db, 'users', user.uid, 'quizAttempts'),
@@ -63,7 +80,6 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
       setHistoryList(items);
     } catch (err) {
       console.error('Failed to load quiz history:', err);
-      // In accordance with guidelines, handle Firestore error
       try {
         handleFirestoreError(err, OperationType.LIST, `users/${user.uid}/quizAttempts`);
       } catch (e) {
@@ -179,38 +195,62 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
       });
     }
 
-    // Save to Firestore if user is authenticated
+    // Save to Cloud Firestore or Local Database
     if (user) {
       setSaveStatus('ডেটাবেজে সংরক্ষণ করা হচ্ছে...');
-      try {
-        const docRef = await addDoc(collection(db, 'users', user.uid, 'quizAttempts'), {
-          userId: user.uid,
-          category: attempt.category,
-          quizTitle: attempt.quizTitle,
-          totalQuestions: attempt.totalQuestions,
-          score: attempt.score,
-          percentage: attempt.percentage,
-          timeTakenSeconds: attempt.timeTakenSeconds,
-          createdAt: attempt.createdAt,
-        });
-        attempt.id = docRef.id;
-        setSaveStatus('ফলাফল আপনার অ্যাকাউন্টে সফলভাবে সংরক্ষিত হয়েছে ✓');
-      } catch (err) {
-        console.error('Failed to save quiz attempt:', err);
-        setSaveStatus('ডেটাবেজে ফলাফল সংরক্ষণ ব্যর্থ হয়েছে।');
+      if (auth.currentUser) {
+        try {
+          const docRef = await addDoc(collection(db, 'users', user.uid, 'quizAttempts'), {
+            userId: user.uid,
+            category: attempt.category,
+            quizTitle: attempt.quizTitle,
+            totalQuestions: attempt.totalQuestions,
+            score: attempt.score,
+            percentage: attempt.percentage,
+            timeTakenSeconds: attempt.timeTakenSeconds,
+            createdAt: attempt.createdAt,
+          });
+          attempt.id = docRef.id;
+          setSaveStatus('ফলাফল আপনার অ্যাকাউন্টে সফলভাবে সংরক্ষিত হয়েছে ✓');
+        } catch (err) {
+          console.error('Failed to save quiz attempt:', err);
+          setSaveStatus('ডেটাবেজে ফলাফল সংরক্ষণ ব্যর্থ হয়েছে।');
+        }
+      } else {
+        const userKey = `bashar_quiz_${user.uid}`;
+        try {
+          const existingRaw = localStorage.getItem(userKey);
+          const existingList: QuizAttempt[] = existingRaw ? JSON.parse(existingRaw) : [];
+          existingList.unshift(attempt);
+          localStorage.setItem(userKey, JSON.stringify(existingList));
+          setSaveStatus('ফলাফল আপনার অ্যাকাউন্টে সফলভাবে সংরক্ষিত হয়েছে ✓');
+        } catch (err) {
+          setSaveStatus('ফলাফল স্থানীয়ভাবে সংরক্ষিত হয়েছে ✓');
+        }
       }
     } else {
-      setSaveStatus('অতিথি হিসেবে সম্পন্ন করেছেন। ক্লাউডে সংরক্ষণের জন্য লগইন করুন।');
+      setSaveStatus('অতিথি হিসেবে সম্পন্ন করেছেন। ইতিহাসে সংরক্ষণের জন্য লগইন করুন।');
     }
   };
 
   const handleDeleteHistory = async (attemptId: string) => {
     if (!user) return;
-    try {
-      await deleteDoc(doc(db, 'users', user.uid, 'quizAttempts', attemptId));
-      setHistoryList((prev) => prev.filter((item) => item.id !== attemptId));
-    } catch (err) {
-      console.error('Failed to delete history attempt:', err);
+    if (auth.currentUser) {
+      try {
+        await deleteDoc(doc(db, 'users', user.uid, 'quizAttempts', attemptId));
+        setHistoryList((prev) => prev.filter((item) => item.id !== attemptId));
+      } catch (err) {
+        console.error('Failed to delete history attempt:', err);
+      }
+    } else {
+      const userKey = `bashar_quiz_${user.uid}`;
+      setHistoryList((prev) => {
+        const next = prev.filter((item) => item.id !== attemptId);
+        try {
+          localStorage.setItem(userKey, JSON.stringify(next));
+        } catch (e) {}
+        return next;
+      });
     }
   };
 

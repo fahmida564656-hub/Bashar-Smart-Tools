@@ -9,7 +9,10 @@ import {
   EyeOff,
   AlertCircle,
   CheckCircle2,
-  ArrowRight
+  ArrowRight,
+  ExternalLink,
+  AlertTriangle,
+  Sparkles
 } from 'lucide-react';
 
 interface AuthModalProps {
@@ -32,6 +35,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const { signUpWithEmail, loginWithEmail, resetPassword, getFriendlyErrorMessage } = useAuth();
@@ -40,6 +44,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const resetFormState = () => {
     setErrorMsg(null);
+    setErrorCode(null);
     setSuccessMsg(null);
   };
 
@@ -96,6 +101,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     } catch (err: any) {
       console.error('Auth error:', err);
       const code = err.code || '';
+      setErrorCode(code);
       if (code) {
         setErrorMsg(getFriendlyErrorMessage(code));
       } else {
@@ -108,7 +114,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md overflow-hidden bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-100 dark:border-slate-800">
+      <div className="relative w-full max-w-md max-h-[92vh] overflow-y-auto bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-100 dark:border-slate-800">
         {/* Header decoration */}
         <div className="relative bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-700 px-6 pt-7 pb-6 text-white">
           <button

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { db, handleFirestoreError, OperationType } from '../../lib/firebase';
+import { auth, db, handleFirestoreError, OperationType } from '../../lib/firebase';
 import {
   collection,
   query,
@@ -67,10 +67,10 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
 
   const autoSaveTimerRef = useRef<any>(null);
 
-  // Real-time Firestore sync
+  // Real-time Firestore sync or Local User database sync
   useEffect(() => {
     if (!user) {
-      // Local fallback drafts
+      // Local fallback drafts for guests
       const savedLocal = localStorage.getItem('bashar_notes_local');
       if (savedLocal) {
         try {
@@ -80,11 +80,37 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
             loadNoteIntoEditor(parsed[0]);
           }
         } catch (e) {}
+      } else {
+        setNotes([]);
       }
       setLoading(false);
       return;
     }
 
+    // Local authenticated user
+    if (!auth.currentUser) {
+      const userKey = `bashar_notes_${user.uid}`;
+      const savedUserNotes = localStorage.getItem(userKey);
+      if (savedUserNotes) {
+        try {
+          const parsed: SmartNote[] = JSON.parse(savedUserNotes);
+          parsed.sort((a, b) => {
+            if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+            return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+          });
+          setNotes(parsed);
+          if (parsed.length > 0 && !activeNoteId) {
+            loadNoteIntoEditor(parsed[0]);
+          }
+        } catch (e) {}
+      } else {
+        setNotes([]);
+      }
+      setLoading(false);
+      return;
+    }
+
+    // Cloud Firestore user
     setLoading(true);
     const notesPath = `users/${user.uid}/notes`;
     const q = query(collection(db, 'users', user.uid, 'notes'));
@@ -138,7 +164,8 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
       return;
     }
 
-    const newNoteData: Omit<SmartNote, 'id'> = {
+    const newNoteData: SmartNote = {
+      id: 'note_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
       userId: user.uid,
       title: 'নতুন শিরোনামহীন নোট',
       content: '',
@@ -150,19 +177,35 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
       updatedAt: new Date().toISOString(),
     };
 
-    try {
-      setSaveStatus('saving');
-      const docRef = await addDoc(collection(db, 'users', user.uid, 'notes'), newNoteData);
-      const createdNote: SmartNote = {
-        id: docRef.id,
-        ...newNoteData,
-      };
-      loadNoteIntoEditor(createdNote);
-      setSaveStatus('saved');
-    } catch (err) {
-      console.error('Failed to create note:', err);
-      setSaveStatus('error');
+    if (auth.currentUser) {
+      try {
+        setSaveStatus('saving');
+        const docRef = await addDoc(collection(db, 'users', user.uid, 'notes'), {
+          userId: newNoteData.userId,
+          title: newNoteData.title,
+          content: newNoteData.content,
+          category: newNoteData.category,
+          color: newNoteData.color,
+          isPinned: newNoteData.isPinned,
+          isArchived: newNoteData.isArchived,
+          createdAt: newNoteData.createdAt,
+          updatedAt: newNoteData.updatedAt,
+        });
+        newNoteData.id = docRef.id;
+      } catch (err) {
+        console.error('Failed to create note in Cloud:', err);
+      }
+    } else {
+      const userKey = `bashar_notes_${user.uid}`;
+      const updated = [newNoteData, ...notes];
+      setNotes(updated);
+      try {
+        localStorage.setItem(userKey, JSON.stringify(updated));
+      } catch (e) {}
     }
+
+    loadNoteIntoEditor(newNoteData);
+    setSaveStatus('saved');
   };
 
   // Debounced auto-save function
@@ -176,21 +219,49 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     }
 
     autoSaveTimerRef.current = setTimeout(async () => {
-      try {
-        const noteRef = doc(db, 'users', user.uid, 'notes', activeNoteId);
-        await updateDoc(noteRef, {
-          title: title.trim() || 'শিরোনামহীন নোট',
-          content,
-          category,
-          color: selectedColor,
-          isPinned,
-          isArchived,
-          updatedAt: new Date().toISOString(),
+      const updatedTime = new Date().toISOString();
+      const updatedTitle = title.trim() || 'শিরোনামহীন নোট';
+
+      if (auth.currentUser) {
+        try {
+          const noteRef = doc(db, 'users', user.uid, 'notes', activeNoteId);
+          await updateDoc(noteRef, {
+            title: updatedTitle,
+            content,
+            category,
+            color: selectedColor,
+            isPinned,
+            isArchived,
+            updatedAt: updatedTime,
+          });
+          setSaveStatus('saved');
+        } catch (err) {
+          console.error('Auto-save error:', err);
+          setSaveStatus('error');
+        }
+      } else {
+        const userKey = `bashar_notes_${user.uid}`;
+        setNotes((prevNotes) => {
+          const next = prevNotes.map((n) =>
+            n.id === activeNoteId
+              ? {
+                  ...n,
+                  title: updatedTitle,
+                  content,
+                  category,
+                  color: selectedColor,
+                  isPinned,
+                  isArchived,
+                  updatedAt: updatedTime,
+                }
+              : n
+          );
+          try {
+            localStorage.setItem(userKey, JSON.stringify(next));
+          } catch (e) {}
+          return next;
         });
         setSaveStatus('saved');
-      } catch (err) {
-        console.error('Auto-save error:', err);
-        setSaveStatus('error');
       }
     }, 800);
 
@@ -204,12 +275,23 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     const nextPin = !isPinned;
     setIsPinned(nextPin);
     if (activeNoteId && user) {
-      try {
-        await updateDoc(doc(db, 'users', user.uid, 'notes', activeNoteId), {
-          isPinned: nextPin,
-          updatedAt: new Date().toISOString(),
+      if (auth.currentUser) {
+        try {
+          await updateDoc(doc(db, 'users', user.uid, 'notes', activeNoteId), {
+            isPinned: nextPin,
+            updatedAt: new Date().toISOString(),
+          });
+        } catch (e) {}
+      } else {
+        const userKey = `bashar_notes_${user.uid}`;
+        setNotes((prev) => {
+          const next = prev.map((n) => (n.id === activeNoteId ? { ...n, isPinned: nextPin } : n));
+          try {
+            localStorage.setItem(userKey, JSON.stringify(next));
+          } catch (e) {}
+          return next;
         });
-      } catch (e) {}
+      }
     }
   };
 
@@ -218,32 +300,55 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     const nextArchive = !isArchived;
     setIsArchived(nextArchive);
     if (activeNoteId && user) {
-      try {
-        await updateDoc(doc(db, 'users', user.uid, 'notes', activeNoteId), {
-          isArchived: nextArchive,
-          updatedAt: new Date().toISOString(),
+      if (auth.currentUser) {
+        try {
+          await updateDoc(doc(db, 'users', user.uid, 'notes', activeNoteId), {
+            isArchived: nextArchive,
+            updatedAt: new Date().toISOString(),
+          });
+        } catch (e) {}
+      } else {
+        const userKey = `bashar_notes_${user.uid}`;
+        setNotes((prev) => {
+          const next = prev.map((n) => (n.id === activeNoteId ? { ...n, isArchived: nextArchive } : n));
+          try {
+            localStorage.setItem(userKey, JSON.stringify(next));
+          } catch (e) {}
+          return next;
         });
-      } catch (e) {}
+      }
     }
   };
 
   // Delete note
   const handleDeleteNote = async (idToDelete: string) => {
     if (!user) return;
-    try {
-      await deleteDoc(doc(db, 'users', user.uid, 'notes', idToDelete));
-      if (activeNoteId === idToDelete) {
-        const remaining = notes.filter((n) => n.id !== idToDelete);
-        if (remaining.length > 0) {
-          loadNoteIntoEditor(remaining[0]);
-        } else {
-          setActiveNoteId(null);
-          setTitle('');
-          setContent('');
-        }
+    if (auth.currentUser) {
+      try {
+        await deleteDoc(doc(db, 'users', user.uid, 'notes', idToDelete));
+      } catch (err) {
+        console.error('Failed to delete note:', err);
       }
-    } catch (err) {
-      console.error('Failed to delete note:', err);
+    } else {
+      const userKey = `bashar_notes_${user.uid}`;
+      setNotes((prev) => {
+        const remaining = prev.filter((n) => n.id !== idToDelete);
+        try {
+          localStorage.setItem(userKey, JSON.stringify(remaining));
+        } catch (e) {}
+        return remaining;
+      });
+    }
+
+    if (activeNoteId === idToDelete) {
+      const remaining = notes.filter((n) => n.id !== idToDelete);
+      if (remaining.length > 0) {
+        loadNoteIntoEditor(remaining[0]);
+      } else {
+        setActiveNoteId(null);
+        setTitle('');
+        setContent('');
+      }
     }
   };
 
