@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { ToolTab, QuizAttempt, CalendarEvent, SmartNote } from '../../types';
-import { db } from '../../lib/firebase';
+import { auth, db } from '../../lib/firebase';
 import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import {
   Sparkles,
@@ -40,48 +40,81 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, onOpenAuth }) 
 
     const loadDashboardData = async () => {
       setLoadingStats(true);
-      try {
-        // 1. Recent Quizzes
-        const quizQ = query(
-          collection(db, 'users', user.uid, 'quizAttempts'),
-          orderBy('createdAt', 'desc'),
-          limit(3)
-        );
-        const quizSnap = await getDocs(quizQ);
-        setRecentQuizzes(
-          quizSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<QuizAttempt, 'id'>) }))
-        );
+      let loadedFromCloud = false;
 
-        // 2. Calendar Tasks
-        const calQ = query(
-          collection(db, 'users', user.uid, 'calendarEvents'),
-          orderBy('createdAt', 'desc'),
-          limit(6)
-        );
-        const calSnap = await getDocs(calQ);
-        const allEvents = calSnap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<CalendarEvent, 'id'>),
-        }));
-        const todayStr = new Date().toISOString().split('T')[0];
-        const todays = allEvents.filter((e) => e.date === todayStr);
-        setTodayTasks(todays.length > 0 ? todays : allEvents.slice(0, 3));
+      if (auth.currentUser) {
+        try {
+          // 1. Recent Quizzes
+          const quizQ = query(
+            collection(db, 'users', user.uid, 'quizAttempts'),
+            orderBy('createdAt', 'desc'),
+            limit(3)
+          );
+          const quizSnap = await getDocs(quizQ);
+          setRecentQuizzes(
+            quizSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<QuizAttempt, 'id'>) }))
+          );
 
-        // 3. Recent Notes
-        const notesQ = query(
-          collection(db, 'users', user.uid, 'notes'),
-          orderBy('updatedAt', 'desc'),
-          limit(3)
-        );
-        const notesSnap = await getDocs(notesQ);
-        setRecentNotes(
-          notesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SmartNote, 'id'>) }))
-        );
-      } catch (err) {
-        console.error('Error fetching dashboard summary:', err);
-      } finally {
-        setLoadingStats(false);
+          // 2. Calendar Tasks
+          const calQ = query(
+            collection(db, 'users', user.uid, 'calendarEvents'),
+            orderBy('createdAt', 'desc'),
+            limit(6)
+          );
+          const calSnap = await getDocs(calQ);
+          const allEvents = calSnap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<CalendarEvent, 'id'>),
+          }));
+          const todayStr = new Date().toISOString().split('T')[0];
+          const todays = allEvents.filter((e) => e.date === todayStr);
+          setTodayTasks(todays.length > 0 ? todays : allEvents.slice(0, 3));
+
+          // 3. Recent Notes
+          const notesQ = query(
+            collection(db, 'users', user.uid, 'notes'),
+            orderBy('updatedAt', 'desc'),
+            limit(3)
+          );
+          const notesSnap = await getDocs(notesQ);
+          setRecentNotes(
+            notesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SmartNote, 'id'>) }))
+          );
+          loadedFromCloud = true;
+        } catch (err) {
+          console.warn('Dashboard cloud fetch fallback to local:', err);
+        }
       }
+
+      if (!loadedFromCloud) {
+        try {
+          const quizRaw = localStorage.getItem(`bashar_quiz_${user.uid}`) || localStorage.getItem('bashar_quiz_history');
+          if (quizRaw) {
+            const parsed = JSON.parse(quizRaw);
+            if (Array.isArray(parsed)) setRecentQuizzes(parsed.slice(0, 3));
+          }
+
+          const calRaw = localStorage.getItem(`bashar_events_${user.uid}`) || localStorage.getItem('bashar_calendar_events');
+          if (calRaw) {
+            const parsed = JSON.parse(calRaw);
+            if (Array.isArray(parsed)) {
+              const todayStr = new Date().toISOString().split('T')[0];
+              const todays = parsed.filter((e: CalendarEvent) => e.date === todayStr);
+              setTodayTasks(todays.length > 0 ? todays : parsed.slice(0, 3));
+            }
+          }
+
+          const notesRaw = localStorage.getItem(`bashar_notes_${user.uid}`) || localStorage.getItem('bashar_smart_notes');
+          if (notesRaw) {
+            const parsed = JSON.parse(notesRaw);
+            if (Array.isArray(parsed)) setRecentNotes(parsed.slice(0, 3));
+          }
+        } catch (e) {
+          console.warn('Dashboard local fallback read note:', e);
+        }
+      }
+
+      setLoadingStats(false);
     };
 
     loadDashboardData();
@@ -141,12 +174,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate, onOpenAuth }) 
             স্বাগতম Bashar Smart Tools প্ল্যাটফর্মে
           </div>
 
-          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight">
-            স্বাগতম, {userName}! 👋
-          </h1>
-          <p className="text-sm sm:text-base text-indigo-100 dark:text-slate-300 mt-2 leading-relaxed">
-            আপনার দৈনন্দিন শেখা, সময় ব্যবস্থাপনা এবং স্মার্ট নোট সংরক্ষণের জন্য একটি পূর্ণাঙ্গ সমন্বিত ওয়ার্কস্পেস।
-          </p>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+            {user && (profile?.photoURL || user.photoURL) ? (
+              <img
+                src={profile?.photoURL || user.photoURL!}
+                alt={userName}
+                className="w-16 h-16 rounded-2xl object-cover border-2 border-white/60 shadow-lg bg-white/10 shrink-0"
+              />
+            ) : user ? (
+              <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center text-2xl font-bold border-2 border-white/40 shadow-lg shrink-0">
+                {userName.charAt(0).toUpperCase()}
+              </div>
+            ) : null}
+
+            <div>
+              <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight leading-tight">
+                স্বাগতম, {userName}! 👋
+              </h1>
+              <p className="text-sm sm:text-base text-indigo-100 dark:text-slate-300 mt-1 leading-relaxed">
+                আপনার দৈনন্দিন শেখা, সময় ব্যবস্থাপনা এবং স্মার্ট নোট সংরক্ষণের জন্য একটি পূর্ণাঙ্গ সমন্বিত ওয়ার্কস্পেস।
+              </p>
+            </div>
+          </div>
 
           {!user && (
             <div className="flex flex-wrap items-center gap-3 mt-6">

@@ -7,6 +7,9 @@ import {
   updateProfile,
   signInWithPopup,
   onAuthStateChanged,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -25,6 +28,7 @@ interface StoredAccount {
   email: string;
   displayName: string;
   passwordHash: string;
+  photoURL?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -91,6 +95,8 @@ export interface AuthContextType {
   resetPassword: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   updateName: (newName: string) => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  updateAvatar: (photoURL: string) => Promise<void>;
   getFriendlyErrorMessage: (errorCode: string) => string;
 }
 
@@ -328,6 +334,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         uid: localMatch.uid,
         email: localMatch.email,
         displayName: localMatch.displayName,
+        photoURL: localMatch.photoURL || null,
         isCloud: false,
       };
 
@@ -335,6 +342,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         uid: localMatch.uid,
         email: localMatch.email,
         displayName: localMatch.displayName,
+        photoURL: localMatch.photoURL || undefined,
         createdAt: localMatch.createdAt,
         updatedAt: localMatch.updatedAt,
       };
@@ -420,6 +428,108 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    if (!user) {
+      throw new Error('অনুগ্রহ করে প্রথমে লগইন করুন। (Please login first.)');
+    }
+    if (!currentPassword) {
+      throw new Error('আপনার বর্তমান পাসওয়ার্ড প্রদান করুন। (Current password is required.)');
+    }
+    if (!newPassword || newPassword.length < 6) {
+      throw new Error('নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে। (New password must be at least 6 characters.)');
+    }
+    if (currentPassword === newPassword) {
+      throw new Error('নতুন পাসওয়ার্ডটি বর্তমান পাসওয়ার্ড থেকে ভিন্ন হতে হবে। (New password must be different from current password.)');
+    }
+
+    let passwordUpdated = false;
+
+    // 1. If Firebase Auth currentUser is present
+    if (auth.currentUser && user.email) {
+      try {
+        const credential = EmailAuthProvider.credential(user.email, currentPassword);
+        await reauthenticateWithCredential(auth.currentUser, credential);
+        await updatePassword(auth.currentUser, newPassword);
+        passwordUpdated = true;
+      } catch (fbErr: any) {
+        console.warn('Firebase password change attempt:', fbErr.code || fbErr);
+        if (fbErr.code === 'auth/wrong-password' || fbErr.code === 'auth/invalid-credential') {
+          throw new Error('বর্তমান পাসওয়ার্ড ভুল হয়েছে। দয়া করে সঠিক পাসওয়ার্ড দিন। (Incorrect current password.)');
+        }
+        // If operation-not-allowed or fallback error, we proceed to check local user account
+      }
+    }
+
+    // 2. Check and update local database
+    const localUsers = getLocalUsers();
+    const userIndex = localUsers.findIndex(
+      (u) => u.uid === user.uid || (user.email && u.email.toLowerCase() === user.email.toLowerCase())
+    );
+
+    if (userIndex !== -1) {
+      const stored = localUsers[userIndex];
+      if (stored.passwordHash && stored.passwordHash !== hashPassword(currentPassword)) {
+        if (!passwordUpdated) {
+          throw new Error('বর্তমান পাসওয়ার্ড ভুল হয়েছে। দয়া করে সঠিক পাসওয়ার্ড দিন। (Incorrect current password.)');
+        }
+      }
+      localUsers[userIndex].passwordHash = hashPassword(newPassword);
+      localUsers[userIndex].updatedAt = new Date().toISOString();
+      saveLocalUsers(localUsers);
+      passwordUpdated = true;
+    }
+
+    if (!passwordUpdated) {
+      throw new Error('পাসওয়ার্ড পরিবর্তন করা সম্ভব হয়নি। দয়া করে সঠিক বর্তমান পাসওয়ার্ড যাচাই করে আবার চেষ্টা করুন।');
+    }
+  };
+
+  const updateAvatar = async (photoURL: string) => {
+    if (!user) return;
+
+    // 1. Cloud auth & Firestore update if active
+    if (auth.currentUser) {
+      try {
+        await updateProfile(auth.currentUser, { photoURL });
+      } catch (e) {
+        console.warn('Firebase updateProfile photoURL error:', e);
+      }
+      try {
+        const userRef = doc(db, 'users', user.uid);
+        await setDoc(userRef, { photoURL, updatedAt: new Date().toISOString() }, { merge: true });
+      } catch (err) {
+        console.warn('Firestore setDoc photoURL error:', err);
+      }
+    }
+
+    // 2. Local storage update
+    const localUsers = getLocalUsers();
+    const idx = localUsers.findIndex(
+      (u) => u.uid === user.uid || (user.email && u.email.toLowerCase() === user.email.toLowerCase())
+    );
+    if (idx !== -1) {
+      localUsers[idx].photoURL = photoURL;
+      localUsers[idx].updatedAt = new Date().toISOString();
+      saveLocalUsers(localUsers);
+    }
+
+    const updatedUser: AppUser = { ...user, photoURL };
+    const updatedProfile: UserProfile = profile
+      ? { ...profile, photoURL, updatedAt: new Date().toISOString() }
+      : {
+          uid: user.uid,
+          email: user.email || '',
+          displayName: user.displayName || 'User',
+          photoURL,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+    setUser(updatedUser);
+    setProfile(updatedProfile);
+    saveActiveSession(updatedUser, updatedProfile);
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -433,6 +543,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         resetPassword,
         logout,
         updateName,
+        changePassword,
+        updateAvatar,
         getFriendlyErrorMessage,
       }}
     >
