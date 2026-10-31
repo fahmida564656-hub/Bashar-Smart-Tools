@@ -47,6 +47,8 @@ export function getFriendlyErrorMessage(errorCode: string): string {
       return 'ইন্টারনেট সংযোগে সমস্যা দেখা দিয়েছে। অনুগ্রহ করে আপনার নেটওয়ার্ক চেক করুন। (Network connection failed. Check your internet.)';
     case 'auth/popup-closed-by-user':
       return 'লগইন পপআপটি বন্ধ করা হয়েছে। (Google login popup was closed.)';
+    case 'auth/unauthorized-domain':
+      return 'অনলাইনে এই ডোমেইনে Google পপআপ সরাসরি অনুমোদিত নয় (auth/unauthorized-domain)। অনুগ্রহ করে ফর্মে আপনার নাম, Gmail ও পাসওয়ার্ড দিয়ে সাইন আপ বা লগইন করুন—এটি ১০০% কার্যকর।';
     default:
       return 'একটি সমস্যা দেখা দিয়েছে। দয়া করে আবার চেষ্টা করুন। (Authentication error: ' + errorCode + ')';
   }

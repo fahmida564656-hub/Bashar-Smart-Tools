@@ -1,6 +1,20 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { X, Mail, Lock, User as UserIcon, Eye, EyeOff, AlertCircle, CheckCircle2, ArrowRight } from 'lucide-react';
+import {
+  X,
+  Mail,
+  Lock,
+  User as UserIcon,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  ArrowRight,
+  Copy,
+  Check,
+  Info
+} from 'lucide-react';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -22,7 +36,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [lastErrorCode, setLastErrorCode] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [showDomainGuide, setShowDomainGuide] = useState<boolean>(false);
+  const [copiedDomain, setCopiedDomain] = useState<boolean>(false);
 
   const { signUpWithEmail, loginWithEmail, loginWithGoogle, resetPassword, getFriendlyErrorMessage } = useAuth();
 
@@ -31,6 +48,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const resetFormState = () => {
     setErrorMsg(null);
     setSuccessMsg(null);
+    setLastErrorCode(null);
   };
 
   const handleModeChange = (newMode: 'login' | 'signup' | 'forgot') => {
@@ -86,6 +104,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     } catch (err: any) {
       console.error('Auth error:', err);
       const code = err.code || '';
+      setLastErrorCode(code);
       if (code) {
         setErrorMsg(getFriendlyErrorMessage(code));
       } else {
@@ -107,8 +126,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }, 800);
     } catch (err: any) {
       console.error('Google Sign-In error:', err);
-      if (err.code) {
-        setErrorMsg(getFriendlyErrorMessage(err.code));
+      const code = err.code || '';
+      setLastErrorCode(code);
+      if (code) {
+        setErrorMsg(getFriendlyErrorMessage(code));
       } else {
         setErrorMsg(err.message || 'গুগল লগইন ব্যর্থ হয়েছে।');
       }
@@ -177,9 +198,89 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* Form Body */}
         <div className="p-6">
           {errorMsg && (
-            <div className="mb-4 flex items-start gap-2.5 p-3.5 text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 rounded-xl animate-in fade-in">
-              <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
-              <div className="flex-1">{errorMsg}</div>
+            <div className="mb-4 space-y-3">
+              <div className="flex items-start gap-2.5 p-3.5 text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 rounded-xl animate-in fade-in">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
+                <div className="flex-1">{errorMsg}</div>
+              </div>
+
+              {lastErrorCode === 'auth/unauthorized-domain' && (
+                <div className="p-4 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-2xl text-xs space-y-3 animate-in fade-in">
+                  <div className="flex items-start gap-2 text-amber-900 dark:text-amber-200">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                    <div>
+                      <p className="font-bold text-xs sm:text-sm">অনলাইন ডোমেইনে Google লগইন সমাধান (Quick Fix)</p>
+                      <p className="mt-1 text-slate-600 dark:text-slate-300 leading-relaxed text-[11px] sm:text-xs">
+                        Google পপআপ নিরাপত্তার স্বার্থে Firebase-এ ডোমেইনটি অথোরাইজড করতে হয়। তবে <strong>কোনো অপেক্ষা ছাড়াই</strong> নিচের ফর্ম দিয়ে নাম, Gmail ও পাসওয়ার্ড প্রদান করে আপনি সরাসরি অ্যাকাউন্ট তৈরি ও লগইন করতে পারেন—এটি যেকোনো ডোমেইনে ১০০% কাজ করে।
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Immediate Solution: Focus Email/Password */}
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-amber-200/80 dark:border-amber-900/60">
+                    <p className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5 text-xs">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      বিকল্প সমাধান: Gmail ও পাসওয়ার্ড দিয়ে সাইন আপ / লগইন
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                      উপরে নাম, Gmail ও পাসওয়ার্ড লিখে বাটনে ক্লিক করুন। আপনার ডেটা ক্লাউড ডেটাবেজে সম্পূর্ণ নিরাপদে সংরক্ষিত থাকবে।
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement;
+                        emailInput?.focus();
+                      }}
+                      className="mt-2.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs cursor-pointer transition shadow-2xs"
+                    >
+                      ✍️ ফর্মে তথ্য পূরণ করতে যান
+                    </button>
+                  </div>
+
+                  {/* Admin Firebase Console Authorized Domain Guide */}
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowDomainGuide(!showDomainGuide)}
+                      className="text-amber-800 dark:text-amber-300 hover:underline font-semibold flex items-center gap-1 cursor-pointer text-[11px]"
+                    >
+                      <span>{showDomainGuide ? '▲ গাইডটি বন্ধ করুন' : '▼ Firebase Console-এ এই ডোমেইনটি কীভাবে অনুমোদন করবেন? (গাইড)'}</span>
+                    </button>
+
+                    {showDomainGuide && (
+                      <div className="mt-2 p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2 text-slate-600 dark:text-slate-300 text-[11px]">
+                        <p className="font-bold text-slate-800 dark:text-slate-200">
+                          আপনার বর্তমান অনলাইন ডোমেইন:
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <code className="px-2 py-1 bg-slate-100 dark:bg-slate-800 rounded font-mono text-indigo-600 dark:text-indigo-400 flex-1 truncate text-[10px]">
+                            {typeof window !== 'undefined' ? window.location.hostname : ''}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (typeof window !== 'undefined') {
+                                navigator.clipboard.writeText(window.location.hostname);
+                                setCopiedDomain(true);
+                                setTimeout(() => setCopiedDomain(false), 2000);
+                              }
+                            }}
+                            className="px-2.5 py-1 text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg cursor-pointer transition"
+                          >
+                            {copiedDomain ? '✓ কপি হয়েছে' : 'কপি'}
+                          </button>
+                        </div>
+                        <ol className="list-decimal list-inside space-y-1 text-slate-500 dark:text-slate-400 mt-2">
+                          <li>Firebase Console-এ আপনার প্রজেক্টটি খুলুন।</li>
+                          <li>বামে <strong>Build</strong> → <strong>Authentication</strong> এ যান।</li>
+                          <li>উপরে <strong>Settings</strong> ট্যাবে ক্লিক করে <strong>Authorized domains</strong> সেকশনে যান।</li>
+                          <li><strong>Add domain</strong> এ ক্লিক করে উপরের ডোমেইনটি পেস্ট করে <strong>Add</strong> চাপুন।</li>
+                        </ol>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -354,6 +455,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </svg>
                 <span>Google দিয়ে সরাসরি চালিয়ে যান</span>
               </button>
+              <p className="text-[11px] text-center text-slate-400 dark:text-slate-500 mt-2">
+                💡 নির্ভরযোগ্য সাইন আপ ও লগইনের জন্য উপরের নাম, Gmail ও পাসওয়ার্ড ফর্মটি ব্যবহার করুন।
+              </p>
             </>
           )}
 
