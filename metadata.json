@@ -1,0 +1,6 @@
+{
+  "name": "Bashar Smart Tools",
+  "description": "All-in-one productivity suite featuring Quiz, Calendar & Task Manager, and Smart Notes with secure Firebase authentication and real-time database sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

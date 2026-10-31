@@ -1,0 +1,92 @@
+{
+  "entities": {
+    "userProfile": {
+      "title": "UserProfile",
+      "description": "User profile data associated with the authenticated account.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "description": "Firebase Auth UID" },
+        "email": { "type": "string", "maxLength": 128, "description": "User Gmail / Email address" },
+        "displayName": { "type": "string", "maxLength": 100, "description": "Full name of the user" },
+        "photoURL": { "type": "string", "maxLength": 500, "description": "Profile picture URL" },
+        "createdAt": { "type": "string", "maxLength": 50, "description": "Account creation timestamp" },
+        "updatedAt": { "type": "string", "maxLength": 50, "description": "Last updated timestamp" }
+      },
+      "required": ["uid", "email", "displayName"]
+    },
+    "quizAttempt": {
+      "title": "QuizAttempt",
+      "description": "Record of a completed quiz session by a user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Attempt unique ID" },
+        "userId": { "type": "string", "maxLength": 128, "description": "User UID who took the quiz" },
+        "category": { "type": "string", "maxLength": 64, "description": "Quiz category name" },
+        "quizTitle": { "type": "string", "maxLength": 150, "description": "Title of the quiz taken" },
+        "totalQuestions": { "type": "number", "description": "Total number of questions" },
+        "score": { "type": "number", "description": "Number of correct answers" },
+        "percentage": { "type": "number", "description": "Percentage score (0-100)" },
+        "timeTakenSeconds": { "type": "number", "description": "Duration taken to complete quiz" },
+        "createdAt": { "type": "string", "maxLength": 50, "description": "Completion timestamp" }
+      },
+      "required": ["id", "userId", "category", "totalQuestions", "score", "percentage", "createdAt"]
+    },
+    "calendarEvent": {
+      "title": "CalendarEvent",
+      "description": "Calendar event or task scheduled by the user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Event unique ID" },
+        "userId": { "type": "string", "maxLength": 128, "description": "User UID who created the event" },
+        "title": { "type": "string", "maxLength": 200, "description": "Title of the event or task" },
+        "description": { "type": "string", "maxLength": 1000, "description": "Description or details" },
+        "date": { "type": "string", "maxLength": 10, "description": "Date in YYYY-MM-DD format" },
+        "startTime": { "type": "string", "maxLength": 10, "description": "Start time in HH:mm format" },
+        "endTime": { "type": "string", "maxLength": 10, "description": "End time in HH:mm format" },
+        "priority": { "type": "string", "enum": ["low", "medium", "high"], "description": "Priority level" },
+        "status": { "type": "string", "enum": ["pending", "completed"], "description": "Task status" },
+        "category": { "type": "string", "maxLength": 50, "description": "Category (Work, Personal, Study, etc.)" },
+        "color": { "type": "string", "maxLength": 30, "description": "Theme color code" },
+        "createdAt": { "type": "string", "maxLength": 50, "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "maxLength": 50, "description": "Last update timestamp" }
+      },
+      "required": ["id", "userId", "title", "date", "priority", "status"]
+    },
+    "note": {
+      "title": "Note",
+      "description": "Personal note created in Smart Notes.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Note unique ID" },
+        "userId": { "type": "string", "maxLength": 128, "description": "Owner user UID" },
+        "title": { "type": "string", "maxLength": 200, "description": "Title of the note" },
+        "content": { "type": "string", "maxLength": 50000, "description": "Note content body" },
+        "category": { "type": "string", "maxLength": 50, "description": "Category or folder" },
+        "color": { "type": "string", "maxLength": 30, "description": "Color tag" },
+        "isPinned": { "type": "boolean", "description": "Whether the note is pinned to top" },
+        "isArchived": { "type": "boolean", "description": "Whether the note is archived" },
+        "createdAt": { "type": "string", "maxLength": 50, "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "maxLength": 50, "description": "Last edited timestamp" }
+      },
+      "required": ["id", "userId", "title"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/userProfile" },
+      "description": "User profile document owned exclusively by the authenticated user."
+    },
+    "/users/{userId}/quizAttempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/quizAttempt" },
+      "description": "User's personal quiz history and score attempts."
+    },
+    "/users/{userId}/calendarEvents/{eventId}": {
+      "schema": { "$ref": "#/entities/calendarEvent" },
+      "description": "User's calendar events, schedules, and tasks."
+    },
+    "/users/{userId}/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/note" },
+      "description": "User's smart notes and drafts."
+    }
+  }
+}
