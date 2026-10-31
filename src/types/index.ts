@@ -74,12 +74,24 @@ export interface TypingResult {
   createdAt: string;
 }
 
+export interface NoteFolder {
+  id: string;
+  userId: string;
+  name: string;
+  color?: string;
+  icon?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface SmartNote {
   id: string;
   userId: string;
   title: string;
   content: string;
   category: string;
+  folderId?: string;
+  folderName?: string;
   color: string;
   isPinned: boolean;
   isArchived: boolean;

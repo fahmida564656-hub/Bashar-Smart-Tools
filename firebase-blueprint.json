@@ -62,6 +62,9 @@
         "title": { "type": "string", "maxLength": 200, "description": "Title of the note" },
         "content": { "type": "string", "maxLength": 50000, "description": "Note content body" },
         "category": { "type": "string", "maxLength": 50, "description": "Category or folder" },
+        "folderId": { "type": "string", "maxLength": 128, "description": "Associated folder ID" },
+        "folderName": { "type": "string", "maxLength": 100, "description": "Associated folder display name" },
+        "tags": { "type": "array", "items": { "type": "string" }, "description": "Tag labels assigned to the note" },
         "color": { "type": "string", "maxLength": 30, "description": "Color tag" },
         "isPinned": { "type": "boolean", "description": "Whether the note is pinned to top" },
         "isArchived": { "type": "boolean", "description": "Whether the note is archived" },
@@ -69,6 +72,21 @@
         "updatedAt": { "type": "string", "maxLength": 50, "description": "Last edited timestamp" }
       },
       "required": ["id", "userId", "title"]
+    },
+    "noteFolder": {
+      "title": "NoteFolder",
+      "description": "Folder categorization for organizing Smart Notes.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Folder unique ID" },
+        "userId": { "type": "string", "maxLength": 128, "description": "Owner user UID" },
+        "name": { "type": "string", "maxLength": 100, "description": "Folder name" },
+        "color": { "type": "string", "maxLength": 30, "description": "Folder accent color" },
+        "icon": { "type": "string", "maxLength": 50, "description": "Optional icon identifier" },
+        "createdAt": { "type": "string", "maxLength": 50, "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "maxLength": 50, "description": "Last update timestamp" }
+      },
+      "required": ["id", "userId", "name", "createdAt"]
     }
   },
   "firestore": {
@@ -87,6 +105,10 @@
     "/users/{userId}/notes/{noteId}": {
       "schema": { "$ref": "#/entities/note" },
       "description": "User's smart notes and drafts."
+    },
+    "/users/{userId}/folders/{folderId}": {
+      "schema": { "$ref": "#/entities/noteFolder" },
+      "description": "User's custom folders for organizing smart notes."
     }
   }
 }

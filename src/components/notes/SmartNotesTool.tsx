@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { auth, db, handleFirestoreError, OperationType } from '../../lib/firebase';
 import {
@@ -10,13 +10,12 @@ import {
   deleteDoc,
   doc,
 } from 'firebase/firestore';
-import { SmartNote } from '../../types';
+import { SmartNote, NoteFolder } from '../../types';
 import {
   FileText,
   Plus,
   Search,
   Pin,
-  PinOff,
   Trash2,
   Copy,
   Download,
@@ -26,55 +25,161 @@ import {
   Check,
   AlertCircle,
   Tag,
-  Clock,
   Folder,
-  Eye,
-  Edit3
+  Hash,
+  X,
+  Edit2,
+  Layers,
+  Filter,
+  CheckCircle2,
+  SlidersHorizontal,
+  FileQuestion,
+  CornerDownLeft
 } from 'lucide-react';
 
 const NOTE_COLORS = [
-  { id: 'indigo', bg: 'bg-indigo-50/70', border: 'border-indigo-200', text: 'text-indigo-800', dot: 'bg-indigo-500' },
-  { id: 'emerald', bg: 'bg-emerald-50/70', border: 'border-emerald-200', text: 'text-emerald-800', dot: 'bg-emerald-500' },
-  { id: 'amber', bg: 'bg-amber-50/70', border: 'border-amber-200', text: 'text-amber-800', dot: 'bg-amber-500' },
-  { id: 'rose', bg: 'bg-rose-50/70', border: 'border-rose-200', text: 'text-rose-800', dot: 'bg-rose-500' },
-  { id: 'purple', bg: 'bg-purple-50/70', border: 'border-purple-200', text: 'text-purple-800', dot: 'bg-purple-500' },
-  { id: 'slate', bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-800', dot: 'bg-slate-500' },
+  { id: 'indigo', bg: 'bg-indigo-50/70 dark:bg-indigo-950/30', border: 'border-indigo-200 dark:border-indigo-800', text: 'text-indigo-800 dark:text-indigo-300', dot: 'bg-indigo-500' },
+  { id: 'emerald', bg: 'bg-emerald-50/70 dark:bg-emerald-950/30', border: 'border-emerald-200 dark:border-emerald-800', text: 'text-emerald-800 dark:text-emerald-300', dot: 'bg-emerald-500' },
+  { id: 'amber', bg: 'bg-amber-50/70 dark:bg-amber-950/30', border: 'border-amber-200 dark:border-amber-800', text: 'text-amber-800 dark:text-amber-300', dot: 'bg-amber-500' },
+  { id: 'rose', bg: 'bg-rose-50/70 dark:bg-rose-950/30', border: 'border-rose-200 dark:border-rose-800', text: 'text-rose-800 dark:text-rose-300', dot: 'bg-rose-500' },
+  { id: 'purple', bg: 'bg-purple-50/70 dark:bg-purple-950/30', border: 'border-purple-200 dark:border-purple-800', text: 'text-purple-800 dark:text-purple-300', dot: 'bg-purple-500' },
+  { id: 'slate', bg: 'bg-slate-50 dark:bg-slate-800/60', border: 'border-slate-200 dark:border-slate-700', text: 'text-slate-800 dark:text-slate-300', dot: 'bg-slate-500' },
 ];
 
-const NOTE_CATEGORIES = ['সকল নোট', 'কাজের নোট', 'ব্যক্তিগত', 'আইডিয়া ও চিন্তা', 'পড়াশোনা ও রিসার্চ'];
+const FOLDER_COLORS = [
+  { id: 'indigo', label: 'নীল (Indigo)', dot: 'bg-indigo-500', text: 'text-indigo-600 dark:text-indigo-400', badge: 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800' },
+  { id: 'emerald', label: 'সবুজ (Green)', dot: 'bg-emerald-500', text: 'text-emerald-600 dark:text-emerald-400', badge: 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800' },
+  { id: 'amber', label: 'হলুদ (Amber)', dot: 'bg-amber-500', text: 'text-amber-600 dark:text-amber-400', badge: 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800' },
+  { id: 'rose', label: 'লাল (Rose)', dot: 'bg-rose-500', text: 'text-rose-600 dark:text-rose-400', badge: 'bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800' },
+  { id: 'purple', label: 'বেগুনি (Purple)', dot: 'bg-purple-500', text: 'text-purple-600 dark:text-purple-400', badge: 'bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800' },
+  { id: 'teal', label: 'টিয়াল (Teal)', dot: 'bg-teal-500', text: 'text-teal-600 dark:text-teal-400', badge: 'bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-800' },
+];
+
+const DEFAULT_FOLDERS: Array<{ name: string; color: string }> = [
+  { name: 'কাজের নোট (Work)', color: 'indigo' },
+  { name: 'ব্যক্তিগত (Personal)', color: 'emerald' },
+  { name: 'পড়াশোনা ও প্রস্তুতি (Study)', color: 'amber' },
+  { name: 'আইডিয়া ও পরিকল্পনা (Ideas)', color: 'purple' },
+];
+
+export type SearchScope = 'all' | 'title' | 'content';
+
+// Helper to highlight matching characters in strings
+const highlightMatch = (text: string, queryStr: string) => {
+  if (!queryStr.trim() || !text) return text;
+  try {
+    const escaped = queryStr.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(${escaped})`, 'gi');
+    const parts = text.split(regex);
+    return (
+      <>
+        {parts.map((part, i) =>
+          part.toLowerCase() === queryStr.trim().toLowerCase() ? (
+            <mark
+              key={i}
+              className="bg-amber-200 dark:bg-amber-900/80 text-amber-950 dark:text-amber-100 font-bold px-0.5 rounded"
+            >
+              {part}
+            </mark>
+          ) : (
+            part
+          )
+        )}
+      </>
+    );
+  } catch (e) {
+    return text;
+  }
+};
+
+// Helper to extract a relevant snippet around the match
+const getSnippetWithMatch = (fullContent: string, queryStr: string, maxLength = 100) => {
+  if (!fullContent) return 'খালি নোট...';
+  if (!queryStr.trim()) {
+    return fullContent.length > maxLength ? fullContent.slice(0, maxLength) + '...' : fullContent;
+  }
+
+  const q = queryStr.toLowerCase().trim();
+  const lower = fullContent.toLowerCase();
+  const matchIndex = lower.indexOf(q);
+
+  if (matchIndex === -1) {
+    return fullContent.length > maxLength ? fullContent.slice(0, maxLength) + '...' : fullContent;
+  }
+
+  const start = Math.max(0, matchIndex - 30);
+  const end = Math.min(fullContent.length, matchIndex + q.length + 55);
+  let snippet = fullContent.slice(start, end);
+
+  if (start > 0) snippet = '...' + snippet;
+  if (end < fullContent.length) snippet = snippet + '...';
+  return snippet;
+};
 
 export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) => {
   const { user } = useAuth();
 
   // Notes state
   const [notes, setNotes] = useState<SmartNote[]>([]);
+  const [folders, setFolders] = useState<NoteFolder[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
 
-  // Editor State
+  // Active Editor State
   const [title, setTitle] = useState<string>('');
   const [content, setContent] = useState<string>('');
   const [category, setCategory] = useState<string>('সকল নোট');
+  const [folderId, setFolderId] = useState<string>('');
+  const [folderName, setFolderName] = useState<string>('');
+  const [tags, setTags] = useState<string[]>([]);
   const [selectedColor, setSelectedColor] = useState<string>('indigo');
   const [isPinned, setIsPinned] = useState<boolean>(false);
   const [isArchived, setIsArchived] = useState<boolean>(false);
 
-  // Status & Filters
+  // Tag Input in Editor
+  const [newTagInput, setNewTagInput] = useState<string>('');
+
+  // Status & Real-time Filters
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [showArchivedOnly, setShowArchivedOnly] = useState<boolean>(false);
+  const [searchScope, setSearchScope] = useState<SearchScope>('all'); // 'all', 'title', 'content'
+  const [selectedFolderFilter, setSelectedFolderFilter] = useState<string>('all'); // 'all', 'pinned', 'archived', 'uncategorized', or folderId
+  const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
 
+  // Folder Management Modals / Forms
+  const [isCreatingFolder, setIsCreatingFolder] = useState<boolean>(false);
+  const [newFolderName, setNewFolderName] = useState<string>('');
+  const [newFolderColor, setNewFolderColor] = useState<string>('indigo');
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [editFolderName, setEditFolderName] = useState<string>('');
+  const [showFolderSidebar, setShowFolderSidebar] = useState<boolean>(true);
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const autoSaveTimerRef = useRef<any>(null);
 
-  // Real-time Firestore sync or Local User database sync
+  // Global Keyboard Shortcut: '/' to focus search input
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // If user pressed '/' and not inside an input/textarea
+      const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      if (e.key === '/' && targetTag !== 'input' && targetTag !== 'textarea') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Real-time Firestore sync or Local User database sync for Notes
   useEffect(() => {
     if (!user) {
       // Local fallback drafts for guests
-      const savedLocal = localStorage.getItem('bashar_notes_local');
-      if (savedLocal) {
+      const savedLocalNotes = localStorage.getItem('bashar_notes_local');
+      if (savedLocalNotes) {
         try {
-          const parsed = JSON.parse(savedLocal);
+          const parsed: SmartNote[] = JSON.parse(savedLocalNotes);
           setNotes(parsed);
           if (parsed.length > 0 && !activeNoteId) {
             loadNoteIntoEditor(parsed[0]);
@@ -83,6 +188,24 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
       } else {
         setNotes([]);
       }
+
+      const savedLocalFolders = localStorage.getItem('bashar_folders_local');
+      if (savedLocalFolders) {
+        try {
+          setFolders(JSON.parse(savedLocalFolders));
+        } catch (e) {}
+      } else {
+        const initFolders: NoteFolder[] = DEFAULT_FOLDERS.map((f, i) => ({
+          id: `folder_default_${i}`,
+          userId: 'guest',
+          name: f.name,
+          color: f.color,
+          createdAt: new Date().toISOString(),
+        }));
+        setFolders(initFolders);
+        localStorage.setItem('bashar_folders_local', JSON.stringify(initFolders));
+      }
+
       setLoading(false);
       return;
     }
@@ -106,6 +229,25 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
       } else {
         setNotes([]);
       }
+
+      const folderKey = `bashar_folders_${user.uid}`;
+      const savedUserFolders = localStorage.getItem(folderKey);
+      if (savedUserFolders) {
+        try {
+          setFolders(JSON.parse(savedUserFolders));
+        } catch (e) {}
+      } else {
+        const initFolders: NoteFolder[] = DEFAULT_FOLDERS.map((f, i) => ({
+          id: `folder_${Date.now()}_${i}`,
+          userId: user.uid,
+          name: f.name,
+          color: f.color,
+          createdAt: new Date().toISOString(),
+        }));
+        setFolders(initFolders);
+        localStorage.setItem(folderKey, JSON.stringify(initFolders));
+      }
+
       setLoading(false);
       return;
     }
@@ -113,17 +255,47 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     // Cloud Firestore user
     setLoading(true);
     const notesPath = `users/${user.uid}/notes`;
-    const q = query(collection(db, 'users', user.uid, 'notes'));
+    const notesQuery = query(collection(db, 'users', user.uid, 'notes'));
+    const foldersQuery = query(collection(db, 'users', user.uid, 'folders'));
 
-    const unsubscribe = onSnapshot(
-      q,
+    // Sync Folders
+    const unsubscribeFolders = onSnapshot(
+      foldersQuery,
+      (snapshot) => {
+        if (snapshot.empty) {
+          DEFAULT_FOLDERS.forEach(async (f) => {
+            try {
+              await addDoc(collection(db, 'users', user.uid, 'folders'), {
+                userId: user.uid,
+                name: f.name,
+                color: f.color,
+                createdAt: new Date().toISOString(),
+              });
+            } catch (err) {}
+          });
+        } else {
+          const items: NoteFolder[] = snapshot.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<NoteFolder, 'id'>),
+          }));
+          items.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+          setFolders(items);
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, `users/${user.uid}/folders`);
+      }
+    );
+
+    // Sync Notes
+    const unsubscribeNotes = onSnapshot(
+      notesQuery,
       (snapshot) => {
         const items: SmartNote[] = snapshot.docs.map((d) => ({
           id: d.id,
           ...(d.data() as Omit<SmartNote, 'id'>),
         }));
 
-        // Sort: Pinned first, then by updatedAt descending
         items.sort((a, b) => {
           if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
           return (b.updatedAt || '').localeCompare(a.updatedAt || '');
@@ -132,7 +304,6 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         setNotes(items);
         setLoading(false);
 
-        // If no active note is loaded, select the first one
         if (items.length > 0 && !activeNoteId) {
           loadNoteIntoEditor(items[0]);
         }
@@ -142,7 +313,10 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeFolders();
+      unsubscribeNotes();
+    };
   }, [user]);
 
   // Load a note into editor
@@ -151,6 +325,9 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     setTitle(note.title);
     setContent(note.content);
     setCategory(note.category || 'সকল নোট');
+    setFolderId(note.folderId || '');
+    setFolderName(note.folderName || '');
+    setTags(note.tags || []);
     setSelectedColor(note.color || 'indigo');
     setIsPinned(note.isPinned || false);
     setIsArchived(note.isArchived || false);
@@ -158,18 +335,25 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
   };
 
   // Create a brand new note
-  const handleCreateNewNote = async () => {
+  const handleCreateNewNote = async (customInitialTitle?: string) => {
     if (!user) {
       onOpenAuth();
       return;
     }
 
+    const activeFolderObj = folders.find((f) => f.id === selectedFolderFilter);
+    const initialFolderId = activeFolderObj ? activeFolderObj.id : '';
+    const initialFolderName = activeFolderObj ? activeFolderObj.name : '';
+
     const newNoteData: SmartNote = {
       id: 'note_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
       userId: user.uid,
-      title: 'নতুন শিরোনামহীন নোট',
+      title: customInitialTitle || 'নতুন শিরোনামহীন নোট',
       content: '',
-      category: 'সকল নোট',
+      category: initialFolderName || 'সাধারণ নোট',
+      folderId: initialFolderId,
+      folderName: initialFolderName,
+      tags: selectedTagFilter ? [selectedTagFilter] : [],
       color: 'indigo',
       isPinned: false,
       isArchived: false,
@@ -185,6 +369,9 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
           title: newNoteData.title,
           content: newNoteData.content,
           category: newNoteData.category,
+          folderId: newNoteData.folderId,
+          folderName: newNoteData.folderName,
+          tags: newNoteData.tags,
           color: newNoteData.color,
           isPinned: newNoteData.isPinned,
           isArchived: newNoteData.isArchived,
@@ -229,6 +416,9 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
             title: updatedTitle,
             content,
             category,
+            folderId,
+            folderName,
+            tags,
             color: selectedColor,
             isPinned,
             isArchived,
@@ -249,6 +439,9 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   title: updatedTitle,
                   content,
                   category,
+                  folderId,
+                  folderName,
+                  tags,
                   color: selectedColor,
                   isPinned,
                   isArchived,
@@ -263,12 +456,140 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         });
         setSaveStatus('saved');
       }
-    }, 800);
+    }, 700);
 
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [title, content, category, selectedColor, isPinned, isArchived]);
+  }, [title, content, category, folderId, folderName, tags, selectedColor, isPinned, isArchived]);
+
+  // Folder Assignment
+  const handleAssignFolder = (targetFolderId: string) => {
+    setFolderId(targetFolderId);
+    if (!targetFolderId) {
+      setFolderName('');
+      setCategory('সাধারণ নোট');
+    } else {
+      const matched = folders.find((f) => f.id === targetFolderId);
+      if (matched) {
+        setFolderName(matched.name);
+        setCategory(matched.name);
+      }
+    }
+  };
+
+  // Tag Operations
+  const handleAddTag = (tagToAdd?: string) => {
+    const raw = tagToAdd || newTagInput;
+    const cleanTag = raw.trim().replace(/^#/, '');
+    if (!cleanTag) return;
+    if (!tags.includes(cleanTag)) {
+      setTags([...tags, cleanTag]);
+    }
+    setNewTagInput('');
+  };
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    setTags(tags.filter((t) => t !== tagToRemove));
+  };
+
+  // Create Folder
+  const handleCreateFolder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFolderName.trim() || !user) return;
+
+    const trimmedName = newFolderName.trim();
+    const folderData: NoteFolder = {
+      id: 'folder_' + Date.now().toString(36),
+      userId: user.uid,
+      name: trimmedName,
+      color: newFolderColor,
+      createdAt: new Date().toISOString(),
+    };
+
+    if (auth.currentUser) {
+      try {
+        const docRef = await addDoc(collection(db, 'users', user.uid, 'folders'), {
+          userId: folderData.userId,
+          name: folderData.name,
+          color: folderData.color,
+          createdAt: folderData.createdAt,
+        });
+        folderData.id = docRef.id;
+      } catch (err) {
+        console.error('Failed to create folder in cloud:', err);
+      }
+    } else {
+      const folderKey = `bashar_folders_${user.uid}`;
+      const nextFolders = [...folders, folderData];
+      setFolders(nextFolders);
+      try {
+        localStorage.setItem(folderKey, JSON.stringify(nextFolders));
+      } catch (e) {}
+    }
+
+    setNewFolderName('');
+    setIsCreatingFolder(false);
+    setSelectedFolderFilter(folderData.id);
+  };
+
+  // Edit / Rename Folder
+  const handleSaveRenameFolder = async (fId: string) => {
+    if (!editFolderName.trim() || !user) return;
+    const newName = editFolderName.trim();
+
+    if (auth.currentUser) {
+      try {
+        await updateDoc(doc(db, 'users', user.uid, 'folders', fId), {
+          name: newName,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (e) {}
+    } else {
+      const folderKey = `bashar_folders_${user.uid}`;
+      const nextFolders = folders.map((f) => (f.id === fId ? { ...f, name: newName } : f));
+      setFolders(nextFolders);
+      try {
+        localStorage.setItem(folderKey, JSON.stringify(nextFolders));
+      } catch (e) {}
+    }
+
+    if (folderId === fId) {
+      setFolderName(newName);
+    }
+
+    setEditingFolderId(null);
+    setEditFolderName('');
+  };
+
+  // Delete Folder
+  const handleDeleteFolder = async (fId: string, fName: string) => {
+    if (!confirm(`আপনি কি "${fName}" ফোল্ডারটি মুছে ফেলতে চান? এতে থাকা নোটগুলো সাধারণ নোটে স্থানান্তরিত হবে।`)) {
+      return;
+    }
+
+    if (auth.currentUser && user) {
+      try {
+        await deleteDoc(doc(db, 'users', user.uid, 'folders', fId));
+      } catch (e) {}
+    } else if (user) {
+      const folderKey = `bashar_folders_${user.uid}`;
+      const remainingFolders = folders.filter((f) => f.id !== fId);
+      setFolders(remainingFolders);
+      try {
+        localStorage.setItem(folderKey, JSON.stringify(remainingFolders));
+      } catch (e) {}
+    }
+
+    if (folderId === fId) {
+      setFolderId('');
+      setFolderName('');
+    }
+
+    if (selectedFolderFilter === fId) {
+      setSelectedFolderFilter('all');
+    }
+  };
 
   // Toggle Pin
   const handleTogglePin = async () => {
@@ -348,6 +669,9 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         setActiveNoteId(null);
         setTitle('');
         setContent('');
+        setTags([]);
+        setFolderId('');
+        setFolderName('');
       }
     }
   };
@@ -361,20 +685,48 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         title: `${title} (কপি)`,
         content,
         category,
+        folderId,
+        folderName,
+        tags,
         color: selectedColor,
         isPinned: false,
         isArchived: false,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      const docRef = await addDoc(collection(db, 'users', user.uid, 'notes'), duplicatedData);
-      loadNoteIntoEditor({ id: docRef.id, ...duplicatedData });
+      if (auth.currentUser) {
+        const docRef = await addDoc(collection(db, 'users', user.uid, 'notes'), duplicatedData);
+        loadNoteIntoEditor({ id: docRef.id, ...duplicatedData });
+      } else {
+        const userKey = `bashar_notes_${user.uid}`;
+        const newObj = {
+          id: 'note_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+          ...duplicatedData,
+        };
+        const updated = [newObj, ...notes];
+        setNotes(updated);
+        try {
+          localStorage.setItem(userKey, JSON.stringify(updated));
+        } catch (e) {}
+        loadNoteIntoEditor(newObj);
+      }
     } catch (e) {}
   };
 
-  // Export note as text or markdown file
+  // Export note as markdown file
   const handleExportNote = () => {
-    const blob = new Blob([`${title}\n\n${content}`], { type: 'text/markdown;charset=utf-8;' });
+    const metaHeader = [
+      `# ${title || 'শিরোনামহীন নোট'}`,
+      folderName ? `> ফোল্ডার: ${folderName}` : '',
+      tags.length > 0 ? `> ট্যাগ: ${tags.map((t) => `#${t}`).join(', ')}` : '',
+      `> তারিখ: ${new Date().toLocaleDateString('bn-BD')}`,
+      '\n---\n\n',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const fullContent = `${metaHeader}${content}`;
+    const blob = new Blob([fullContent], { type: 'text/markdown;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -383,33 +735,108 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     URL.revokeObjectURL(url);
   };
 
+  // Calculate unique tags and counts across all notes
+  const allTagsMap: { [key: string]: number } = {};
+  notes.forEach((n) => {
+    if (n.tags && Array.isArray(n.tags)) {
+      n.tags.forEach((t) => {
+        if (t) allTagsMap[t] = (allTagsMap[t] || 0) + 1;
+      });
+    }
+  });
+  const allUniqueTags = Object.keys(allTagsMap).sort((a, b) => allTagsMap[b] - allTagsMap[a]);
+
+  // Counts for folders
+  const getFolderCount = (fId: string) => {
+    return notes.filter((n) => !n.isArchived && n.folderId === fId).length;
+  };
+
+  const uncategorizedCount = notes.filter((n) => !n.isArchived && !n.folderId).length;
+  const pinnedCount = notes.filter((n) => !n.isArchived && n.isPinned).length;
+  const archivedCount = notes.filter((n) => n.isArchived).length;
+  const activeNotesCount = notes.filter((n) => !n.isArchived).length;
+
+  // Real-time filtering by folder, tag, search query (title + content), and searchScope
+  const filteredNotes = useMemo(() => {
+    return notes.filter((n) => {
+      // Archived filter
+      if (selectedFolderFilter === 'archived') {
+        if (!n.isArchived) return false;
+      } else {
+        if (n.isArchived) return false;
+      }
+
+      // Specific folder view filter
+      if (selectedFolderFilter === 'pinned') {
+        if (!n.isPinned) return false;
+      } else if (selectedFolderFilter === 'uncategorized') {
+        if (n.folderId) return false;
+      } else if (selectedFolderFilter !== 'all' && selectedFolderFilter !== 'archived') {
+        if (n.folderId !== selectedFolderFilter) return false;
+      }
+
+      // Tag filter
+      if (selectedTagFilter) {
+        if (!n.tags || !n.tags.includes(selectedTagFilter)) return false;
+      }
+
+      // Real-time Search Query Filtering
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchTitle = (n.title || '').toLowerCase().includes(q);
+        const matchContent = (n.content || '').toLowerCase().includes(q);
+        const matchFolder = (n.folderName || '').toLowerCase().includes(q);
+        const matchTags = n.tags?.some((t) => t.toLowerCase().includes(q));
+
+        if (searchScope === 'title') {
+          return matchTitle;
+        }
+        if (searchScope === 'content') {
+          return matchContent;
+        }
+        // 'all': matches title, content, folder name, or tags
+        return matchTitle || matchContent || matchFolder || matchTags;
+      }
+
+      return true;
+    });
+  }, [notes, selectedFolderFilter, selectedTagFilter, searchQuery, searchScope]);
+
+  // Auto-switch to first matching note if current active note is not in filtered results during active search
+  useEffect(() => {
+    if (searchQuery.trim() && filteredNotes.length > 0) {
+      const isCurrentInResults = filteredNotes.some((n) => n.id === activeNoteId);
+      if (!isCurrentInResults) {
+        loadNoteIntoEditor(filteredNotes[0]);
+      }
+    }
+  }, [searchQuery, searchScope, filteredNotes, activeNoteId]);
+
+  // Count search term matches in active note
+  const activeNoteMatchCount = useMemo(() => {
+    if (!searchQuery.trim()) return 0;
+    try {
+      const q = searchQuery.toLowerCase().trim();
+      const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(escaped, 'gi');
+      let count = 0;
+      if (title) {
+        const m = title.match(regex);
+        if (m) count += m.length;
+      }
+      if (content) {
+        const m = content.match(regex);
+        if (m) count += m.length;
+      }
+      return count;
+    } catch (e) {
+      return 0;
+    }
+  }, [searchQuery, title, content]);
+
   // Word and character counts
   const wordCount = content.trim() ? content.trim().split(/\s+/).length : 0;
   const charCount = content.length;
-
-  // Filter notes
-  const filteredNotes = notes.filter((n) => {
-    if (showArchivedOnly) {
-      if (!n.isArchived) return false;
-    } else {
-      if (n.isArchived) return false;
-    }
-
-    if (selectedCategory !== 'all' && n.category !== selectedCategory) {
-      return false;
-    }
-
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      return (
-        n.title.toLowerCase().includes(q) ||
-        n.content.toLowerCase().includes(q) ||
-        n.category.toLowerCase().includes(q)
-      );
-    }
-
-    return true;
-  });
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -418,31 +845,28 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 mb-2">
             <Sparkles className="w-3.5 h-3.5" />
-            স্মার্ট নোট তৈরি, সম্পাদনা ও সংরক্ষণ (Smart Notes)
+            রিয়েল-টাইম সার্চ, ফোল্ডার ও ট্যাগ ব্যবস্থাপনা (Smart Notes)
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">
             Bashar Smart Notes
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            অটো-সেভ, পিন, ক্যাটাগরি, তাৎক্ষণিক সার্চ এবং ক্লাউড ব্যাকআপ সম্বলিত আধুনিক নোটপ্যাড।
+            শিরোনাম ও বিষয়বস্তুতে রিয়েল-টাইম সার্চ, কিওয়ার্ড হাইলাইটিং, ফোল্ডার ও ক্লাউড অটো-সেভ।
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowArchivedOnly(!showArchivedOnly)}
-            className={`px-3.5 py-2 text-xs font-semibold rounded-xl border transition cursor-pointer flex items-center gap-1.5 ${
-              showArchivedOnly
-                ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
-                : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-            }`}
+            onClick={() => setShowFolderSidebar(!showFolderSidebar)}
+            className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
+            title="ফোল্ডার নেভিগেশন প্রদর্শন বা আড়াল করুন"
           >
-            <Archive className="w-3.5 h-3.5" />
-            {showArchivedOnly ? 'সকল নোট দেখুন' : 'আর্কাইভকৃত নোট'}
+            <Folder className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+            {showFolderSidebar ? 'ফোল্ডার লুকান' : 'ফোল্ডার প্রদর্শন'}
           </button>
 
           <button
-            onClick={handleCreateNewNote}
+            onClick={() => handleCreateNewNote()}
             className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -455,7 +879,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-amber-800 dark:text-amber-200 text-xs sm:text-sm">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-5 h-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-            <span>নোটগুলো ক্লাউডে স্থায়ীভাবে সেভ ও যেকোনো ডিভাইস থেকে অ্যাক্সেস করতে লগইন করুন।</span>
+            <span>নোট এবং কাস্টম ফোল্ডারগুলো ক্লাউডে স্থায়ীভাবে সেভ রাখতে অনুগ্রহ করে লগইন করুন।</span>
           </div>
           <button
             onClick={onOpenAuth}
@@ -466,67 +890,538 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         </div>
       )}
 
-      {/* Main 2-Column Split: Sidebar Notes List (Left) + Active Note Editor (Right) */}
+      {/* Main 3-Column / Responsive Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column: Notes Sidebar */}
-        <div className="lg:col-span-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs p-4 space-y-4">
-          {/* Search Box */}
-          <div className="relative">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="নোট খুঁজুন (শিরোনাম বা টেক্সট)..."
-              className="w-full pl-10 pr-3 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 dark:bg-slate-800/50 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none"
-            />
+        {/* Left Column 1: Folder & Tag Organization Tree */}
+        {showFolderSidebar && (
+          <div className="lg:col-span-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs p-4 space-y-6">
+            {/* Quick Views */}
+            <div>
+              <div className="flex items-center justify-between mb-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                <span>ভিউসমূহ (Views)</span>
+              </div>
+              <div className="space-y-1">
+                <button
+                  onClick={() => {
+                    setSelectedFolderFilter('all');
+                    setSelectedTagFilter(null);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                    selectedFolderFilter === 'all' && !selectedTagFilter
+                      ? 'bg-indigo-600 text-white shadow-xs font-semibold'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4" />
+                    <span>সকল নোট (All Notes)</span>
+                  </div>
+                  <span
+                    className={`text-[11px] px-2 py-0.5 rounded-full ${
+                      selectedFolderFilter === 'all' && !selectedTagFilter
+                        ? 'bg-indigo-700 text-indigo-100'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    {activeNotesCount}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setSelectedFolderFilter('pinned');
+                    setSelectedTagFilter(null);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                    selectedFolderFilter === 'pinned'
+                      ? 'bg-indigo-600 text-white shadow-xs font-semibold'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Pin className="w-4 h-4 text-amber-500" />
+                    <span>পিন করা নোট (Pinned)</span>
+                  </div>
+                  <span
+                    className={`text-[11px] px-2 py-0.5 rounded-full ${
+                      selectedFolderFilter === 'pinned'
+                        ? 'bg-indigo-700 text-indigo-100'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    {pinnedCount}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setSelectedFolderFilter('archived');
+                    setSelectedTagFilter(null);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                    selectedFolderFilter === 'archived'
+                      ? 'bg-indigo-600 text-white shadow-xs font-semibold'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Archive className="w-4 h-4 text-purple-500" />
+                    <span>আর্কাইভ (Archived)</span>
+                  </div>
+                  <span
+                    className={`text-[11px] px-2 py-0.5 rounded-full ${
+                      selectedFolderFilter === 'archived'
+                        ? 'bg-indigo-700 text-indigo-100'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    {archivedCount}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setSelectedFolderFilter('uncategorized');
+                    setSelectedTagFilter(null);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                    selectedFolderFilter === 'uncategorized'
+                      ? 'bg-indigo-600 text-white shadow-xs font-semibold'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-slate-400" />
+                    <span>সাধারণ / ফোল্ডারবিহীন</span>
+                  </div>
+                  <span
+                    className={`text-[11px] px-2 py-0.5 rounded-full ${
+                      selectedFolderFilter === 'uncategorized'
+                        ? 'bg-indigo-700 text-indigo-100'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    {uncategorizedCount}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Custom Folders Section */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <Folder className="w-3.5 h-3.5" />
+                  ফোল্ডারসমূহ ({folders.length})
+                </span>
+                <button
+                  onClick={() => setIsCreatingFolder(true)}
+                  className="p-1 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 rounded-lg transition cursor-pointer flex items-center gap-1 text-[11px] font-semibold"
+                  title="নতুন ফোল্ডার তৈরি করুন"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  নতুন
+                </button>
+              </div>
+
+              {/* Inline Create Folder Input */}
+              {isCreatingFolder && (
+                <form onSubmit={handleCreateFolder} className="p-3 mb-2 bg-indigo-50/70 dark:bg-indigo-950/40 rounded-xl border border-indigo-200 dark:border-indigo-800/80 space-y-2">
+                  <input
+                    type="text"
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    placeholder="ফোল্ডারের নাম লিখুন..."
+                    autoFocus
+                    className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-700 rounded-lg text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1">
+                      {FOLDER_COLORS.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => setNewFolderColor(c.id)}
+                          className={`w-3.5 h-3.5 rounded-full ${c.dot} cursor-pointer transition ${
+                            newFolderColor === c.id ? 'ring-2 ring-indigo-500 scale-125' : 'opacity-70 hover:opacity-100'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreatingFolder(false);
+                          setNewFolderName('');
+                        }}
+                        className="px-2 py-1 text-[11px] text-slate-500 hover:text-slate-700 dark:text-slate-400 rounded-md cursor-pointer"
+                      >
+                        বাতিল
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={!newFolderName.trim()}
+                        className="px-2.5 py-1 text-[11px] font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-md cursor-pointer"
+                      >
+                        তৈরি করুন
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              )}
+
+              {/* Folders List */}
+              <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+                {folders.map((folder) => {
+                  const isSelected = selectedFolderFilter === folder.id;
+                  const colorObj = FOLDER_COLORS.find((c) => c.id === folder.color) || FOLDER_COLORS[0];
+                  const count = getFolderCount(folder.id);
+                  const isRenaming = editingFolderId === folder.id;
+
+                  if (isRenaming) {
+                    return (
+                      <div key={folder.id} className="p-2 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={editFolderName}
+                          onChange={(e) => setEditFolderName(e.target.value)}
+                          autoFocus
+                          className="w-full px-2 py-1 text-xs border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:outline-none"
+                        />
+                        <button
+                          onClick={() => handleSaveRenameFolder(folder.id)}
+                          className="p-1 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer"
+                          title="সংরক্ষণ করুন"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setEditingFolderId(null)}
+                          className="p-1 text-slate-400 hover:bg-slate-200 rounded cursor-pointer"
+                          title="বাতিল"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={folder.id}
+                      className={`group flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
+                        isSelected
+                          ? 'bg-indigo-600 text-white shadow-xs font-semibold'
+                          : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <div
+                        onClick={() => {
+                          setSelectedFolderFilter(folder.id);
+                          setSelectedTagFilter(null);
+                        }}
+                        className="flex items-center gap-2 min-w-0 flex-1 py-0.5"
+                      >
+                        <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${colorObj.dot}`} />
+                        <span className="truncate">{folder.name}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <span
+                          className={`text-[11px] px-2 py-0.2 rounded-full ${
+                            isSelected
+                              ? 'bg-indigo-700 text-indigo-100'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                          }`}
+                        >
+                          {count}
+                        </span>
+
+                        <div className={`items-center gap-0.5 ${isSelected ? 'flex' : 'hidden group-hover:flex'}`}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingFolderId(folder.id);
+                              setEditFolderName(folder.name);
+                            }}
+                            className={`p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 ${
+                              isSelected ? 'text-indigo-100 hover:text-white' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+                            }`}
+                            title="নাম পরিবর্তন করুন"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteFolder(folder.id, folder.name);
+                            }}
+                            className={`p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 ${
+                              isSelected ? 'text-rose-200 hover:text-rose-100' : 'text-slate-400 hover:text-rose-600'
+                            }`}
+                            title="ফোল্ডার মুছুন"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Tags Cloud / Filter Section */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5" />
+                  ট্যাগসমূহ (Tags)
+                </span>
+                {selectedTagFilter && (
+                  <button
+                    onClick={() => setSelectedTagFilter(null)}
+                    className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                  >
+                    ফিল্টার মুছুন
+                  </button>
+                )}
+              </div>
+
+              {allUniqueTags.length === 0 ? (
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 italic py-2">
+                  কোনো ট্যাগ এখনো নেই। নোট এডিটরে `#ট্যাগ` যোগ করুন।
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {allUniqueTags.map((tg) => {
+                    const isSelected = selectedTagFilter === tg;
+                    return (
+                      <button
+                        key={tg}
+                        onClick={() => setSelectedTagFilter(isSelected ? null : tg)}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs transition cursor-pointer border ${
+                          isSelected
+                            ? 'bg-indigo-600 border-indigo-600 text-white font-semibold shadow-xs'
+                            : 'bg-slate-50 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        <Hash className="w-3 h-3 opacity-70" />
+                        <span>{tg}</span>
+                        <span
+                          className={`text-[10px] ml-0.5 px-1.5 py-0.2 rounded-full ${
+                            isSelected ? 'bg-indigo-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+                          }`}
+                        >
+                          {allTagsMap[tg]}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Middle Column 2: Filtered Notes Sidebar / Real-Time Search List */}
+        <div className={`${showFolderSidebar ? 'lg:col-span-4' : 'lg:col-span-5'} bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs p-4 space-y-3`}>
+          {/* Real-time Search Box */}
+          <div className="space-y-2">
+            <div className="relative">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setSearchQuery('');
+                  }
+                }}
+                placeholder="শিরোনাম বা বিষয়বস্তু দিয়ে রিয়েল-টাইম সার্চ... ('/' চাপুন)"
+                className="w-full pl-10 pr-9 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 dark:bg-slate-800/50 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none transition shadow-2xs"
+              />
+              {searchQuery ? (
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    searchInputRef.current?.focus();
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer p-0.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition"
+                  title="সার্চ মুছুন (Esc)"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              ) : (
+                <kbd className="hidden sm:inline-block absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded font-mono">
+                  /
+                </kbd>
+              )}
+            </div>
+
+            {/* Search Scope Filter Buttons */}
+            <div className="flex items-center justify-between text-[11px] px-0.5">
+              <div className="flex items-center gap-1">
+                <span className="text-slate-400 dark:text-slate-500 mr-1 flex items-center gap-0.5">
+                  <SlidersHorizontal className="w-2.5 h-2.5" />
+                  সার্চ স্কোপ:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSearchScope('all')}
+                  className={`px-2 py-0.5 rounded-md transition cursor-pointer font-medium ${
+                    searchScope === 'all'
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  উভয় (All)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSearchScope('title')}
+                  className={`px-2 py-0.5 rounded-md transition cursor-pointer font-medium ${
+                    searchScope === 'title'
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  শুধু শিরোনাম
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSearchScope('content')}
+                  className={`px-2 py-0.5 rounded-md transition cursor-pointer font-medium ${
+                    searchScope === 'content'
+                      ? 'bg-indigo-600 text-white shadow-2xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  শুধু টেক্সট
+                </button>
+              </div>
+
+              {/* Match Counter Badge */}
+              {searchQuery.trim() && (
+                <span className="text-slate-500 dark:text-slate-400 font-medium">
+                  {filteredNotes.length > 0 ? (
+                    <span className="text-indigo-600 dark:text-indigo-400 font-semibold">
+                      {filteredNotes.length}টি মিল পাওয়া গেছে
+                    </span>
+                  ) : (
+                    <span className="text-rose-500 dark:text-rose-400">০টি ফলাফল</span>
+                  )}
+                </span>
+              )}
+            </div>
           </div>
 
-          {/* Category Filter Pills */}
-          <div className="flex gap-1.5 overflow-x-auto pb-1 text-xs">
-            <button
-              onClick={() => setSelectedCategory('all')}
-              className={`px-3 py-1 rounded-lg font-medium whitespace-nowrap transition cursor-pointer ${
-                selectedCategory === 'all'
-                  ? 'bg-indigo-600 text-white shadow-xs'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-              }`}
-            >
-              সকল ({notes.length})
-            </button>
-            {NOTE_CATEGORIES.map((cat) => (
+          {/* Active Filter Indicators Banner */}
+          {(selectedFolderFilter !== 'all' || selectedTagFilter || searchQuery) && (
+            <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-1.5 text-xs">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] text-slate-400 dark:text-slate-500 font-semibold flex items-center gap-1">
+                  <Filter className="w-3 h-3" />
+                  ফিল্টার:
+                </span>
+                {selectedFolderFilter !== 'all' && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[11px] font-medium">
+                    <Folder className="w-3 h-3" />
+                    {selectedFolderFilter === 'pinned'
+                      ? 'পিন করা'
+                      : selectedFolderFilter === 'archived'
+                      ? 'আর্কাইভ'
+                      : selectedFolderFilter === 'uncategorized'
+                      ? 'সাধারণ'
+                      : folders.find((f) => f.id === selectedFolderFilter)?.name || 'ফোল্ডার'}
+                  </span>
+                )}
+                {selectedTagFilter && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 text-[11px] font-medium">
+                    <Hash className="w-3 h-3" />
+                    {selectedTagFilter}
+                    <button onClick={() => setSelectedTagFilter(null)} className="hover:text-rose-500 cursor-pointer ml-0.5">
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </span>
+                )}
+                {searchQuery.trim() && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800 text-[11px] font-medium">
+                    <Search className="w-3 h-3 text-amber-600" />
+                    &ldquo;{searchQuery}&rdquo;
+                    <button onClick={() => setSearchQuery('')} className="hover:text-rose-500 cursor-pointer ml-0.5">
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </span>
+                )}
+              </div>
+
               <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-3 py-1 rounded-lg font-medium whitespace-nowrap transition cursor-pointer ${
-                  selectedCategory === cat
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                }`}
+                onClick={() => {
+                  setSelectedFolderFilter('all');
+                  setSelectedTagFilter(null);
+                  setSearchQuery('');
+                  setSearchScope('all');
+                }}
+                className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-semibold cursor-pointer"
               >
-                {cat}
+                রিসেট
               </button>
-            ))}
-          </div>
+            </div>
+          )}
 
-          {/* Notes List */}
-          <div className="space-y-2 max-h-[580px] overflow-y-auto pr-1">
+          {/* Notes List with Real-time Keyword Highlighting */}
+          <div className="space-y-2 max-h-[620px] overflow-y-auto pr-1">
             {loading ? (
               <div className="py-12 text-center text-slate-400">
                 <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
                 <p className="text-xs">নোট লোড হচ্ছে...</p>
               </div>
             ) : filteredNotes.length === 0 ? (
-              <div className="py-12 text-center bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800 p-4">
-                <FileText className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
-                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">কোনো নোট পাওয়া যায়নি</p>
-                <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">উপরে '+ নতুন নোট তৈরি' বাটনে ক্লিক করুন।</p>
+              <div className="py-10 text-center bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800 p-5 space-y-3">
+                <FileQuestion className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto" />
+                <div>
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                    {searchQuery.trim()
+                      ? `"${searchQuery}" সংক্রান্ত কোনো নোট পাওয়া যায়নি`
+                      : 'কোনো নোট পাওয়া যায়নি'}
+                  </p>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                    {searchQuery.trim()
+                      ? 'সার্চ টার্ম পরিবর্তন করে দেখতে পারেন অথবা এই নামে সরাসরি নতুন নোট তৈরি করুন।'
+                      : 'উপরে "+ নতুন নোট তৈরি" বাটনে ক্লিক করে নোট শুরু করুন।'}
+                  </p>
+                </div>
+                {searchQuery.trim() ? (
+                  <div className="flex items-center justify-center gap-2 pt-1">
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 transition cursor-pointer"
+                    >
+                      সার্চ ক্লিয়ার করুন
+                    </button>
+                    <button
+                      onClick={() => handleCreateNewNote(searchQuery.trim())}
+                      className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition cursor-pointer inline-flex items-center gap-1"
+                    >
+                      <Plus className="w-3 h-3" />
+                      &ldquo;{searchQuery.slice(0, 15)}&rdquo; নোট তৈরি
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ) : (
               filteredNotes.map((note) => {
                 const isActive = activeNoteId === note.id;
-                const colorConfig =
-                  NOTE_COLORS.find((c) => c.id === note.color) || NOTE_COLORS[0];
+                const colorConfig = NOTE_COLORS.find((c) => c.id === note.color) || NOTE_COLORS[0];
+                const matchedFolder = folders.find((f) => f.id === note.folderId);
+                const folderColorObj = matchedFolder ? FOLDER_COLORS.find((c) => c.id === matchedFolder.color) : null;
+
+                // Match snippet for content preview
+                const contentSnippet = getSnippetWithMatch(note.content, searchQuery, 90);
 
                 return (
                   <div
@@ -542,21 +1437,69 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${colorConfig.dot}`} />
                         <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
-                          {note.title || 'শিরোনামহীন নোট'}
+                          {searchQuery.trim()
+                            ? highlightMatch(note.title || 'শিরোনামহীন নোট', searchQuery)
+                            : note.title || 'শিরোনামহীন নোট'}
                         </h4>
                       </div>
 
-                      {note.isPinned && (
-                        <Pin className="w-3.5 h-3.5 text-amber-500 fill-amber-500 flex-shrink-0" />
-                      )}
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {note.isPinned && (
+                          <Pin className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                        )}
+                        {note.isArchived && (
+                          <Archive className="w-3.5 h-3.5 text-purple-400" />
+                        )}
+                      </div>
                     </div>
 
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 leading-relaxed">
-                      {note.content || 'খালি নোট...'}
+                      {searchQuery.trim()
+                        ? highlightMatch(contentSnippet, searchQuery)
+                        : note.content || 'খালি নোট...'}
                     </p>
 
+                    {/* Tags preview on Note card */}
+                    {note.tags && note.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {note.tags.slice(0, 3).map((tg) => (
+                          <span
+                            key={tg}
+                            className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700/60 font-medium"
+                          >
+                            <Hash className="w-2.5 h-2.5 opacity-60" />
+                            {searchQuery.trim() ? highlightMatch(tg, searchQuery) : tg}
+                          </span>
+                        ))}
+                        {note.tags.length > 3 && (
+                          <span className="text-[10px] text-slate-400 dark:text-slate-500 self-center">
+                            +{note.tags.length - 3}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-400 dark:text-slate-500">
-                      <span>{note.category || 'নোট'}</span>
+                      <div className="flex items-center gap-1 truncate max-w-[150px]">
+                        {matchedFolder ? (
+                          <span className={`inline-flex items-center gap-1 truncate font-medium ${folderColorObj?.text || 'text-slate-500'}`}>
+                            <Folder className="w-3 h-3 flex-shrink-0" />
+                            <span className="truncate">
+                              {searchQuery.trim() ? highlightMatch(matchedFolder.name, searchQuery) : matchedFolder.name}
+                            </span>
+                          </span>
+                        ) : note.folderName ? (
+                          <span className="inline-flex items-center gap-1 truncate font-medium text-slate-500">
+                            <Folder className="w-3 h-3 flex-shrink-0" />
+                            <span className="truncate">
+                              {searchQuery.trim() ? highlightMatch(note.folderName, searchQuery) : note.folderName}
+                            </span>
+                          </span>
+                        ) : (
+                          <span>সাধারণ নোট</span>
+                        )}
+                      </div>
+
                       <span>
                         {new Date(note.updatedAt || note.createdAt).toLocaleDateString('bn-BD', {
                           month: 'short',
@@ -571,10 +1514,29 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
           </div>
         </div>
 
-        {/* Right Column: Active Note Editor */}
-        <div className="lg:col-span-8 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs p-6 space-y-4">
+        {/* Right Column 3: Active Note Editor */}
+        <div className={`${showFolderSidebar ? 'lg:col-span-5' : 'lg:col-span-7'} bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs p-6 space-y-4`}>
           {activeNoteId ? (
             <>
+              {/* Real-time Search Occurrence Banner in Active Note */}
+              {searchQuery.trim() && (
+                <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-xl flex items-center justify-between text-xs text-amber-900 dark:text-amber-200">
+                  <div className="flex items-center gap-2">
+                    <Search className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                    <span>
+                      সার্চ টার্ম <strong>&ldquo;{searchQuery}&rdquo;</strong> বর্তমান নোটে{' '}
+                      <strong>{activeNoteMatchCount}</strong> বার পাওয়া গেছে।
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="text-[11px] font-semibold text-amber-800 dark:text-amber-300 hover:underline cursor-pointer"
+                  >
+                    সার্চ মুছুন
+                  </button>
+                </div>
+              )}
+
               {/* Editor Top Bar */}
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
                 {/* Auto-save Status Indicator */}
@@ -588,7 +1550,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   {saveStatus === 'saved' && (
                     <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
                       <Check className="w-3.5 h-3.5 text-emerald-500" />
-                      ক্লাউডে সংরক্ষিত (Saved)
+                      সংরক্ষিত (Auto-saved)
                     </span>
                   )}
                   {saveStatus === 'error' && (
@@ -638,7 +1600,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   <button
                     onClick={handleDuplicateNote}
                     className="p-2 rounded-xl text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition cursor-pointer"
-                    title="ডুপ্লিকেট নোট"
+                    title="ডুপ্লিকেট কপি করুন"
                   >
                     <Copy className="w-4 h-4" />
                   </button>
@@ -646,7 +1608,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   <button
                     onClick={handleExportNote}
                     className="p-2 rounded-xl text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition cursor-pointer"
-                    title="ডাউনলোড (.md)"
+                    title="ডাউনলোড করুন (.md)"
                   >
                     <Download className="w-4 h-4" />
                   </button>
@@ -672,20 +1634,111 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                 />
               </div>
 
-              {/* Category selector row */}
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-slate-400 dark:text-slate-500 font-semibold uppercase">ক্যাটাগরি:</span>
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="text-xs border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none"
-                >
-                  {NOTE_CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
+              {/* Organization Metadata Bar: Folder Selector & Tag Management */}
+              <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
+                {/* Folder Selector */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold flex items-center gap-1">
+                    <Folder className="w-3.5 h-3.5 text-indigo-500" />
+                    ফোল্ডার:
+                  </span>
+                  <select
+                    value={folderId}
+                    onChange={(e) => handleAssignFolder(e.target.value)}
+                    className="text-xs border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    <option value="">সাধারণ / কোনো ফোল্ডার নেই</option>
+                    {folders.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        📁 {f.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    onClick={() => setIsCreatingFolder(true)}
+                    className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5 cursor-pointer ml-1"
+                  >
+                    <Plus className="w-3 h-3" />
+                    নতুন ফোল্ডার
+                  </button>
+                </div>
+
+                {/* Tags Management */}
+                <div>
+                  <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                    <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold flex items-center gap-1">
+                      <Tag className="w-3.5 h-3.5 text-purple-500" />
+                      ট্যাগসমূহ:
+                    </span>
+
+                    {/* Active tags badges */}
+                    {tags.map((t) => (
+                      <span
+                        key={t}
+                        className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-medium"
+                      >
+                        <Hash className="w-3 h-3 text-indigo-500" />
+                        {t}
+                        <button
+                          onClick={() => handleRemoveTag(t)}
+                          className="hover:text-rose-500 transition cursor-pointer ml-0.5"
+                          title="ট্যাগ মুছুন"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+
+                    {/* Add tag inline form */}
+                    <div className="inline-flex items-center gap-1">
+                      <div className="relative">
+                        <Hash className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                        <input
+                          type="text"
+                          value={newTagInput}
+                          onChange={(e) => setNewTagInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ',') {
+                              e.preventDefault();
+                              handleAddTag();
+                            }
+                          }}
+                          placeholder="ট্যাগ লিখুন (Enter চাপুন)..."
+                          className="pl-6 pr-2 py-0.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 w-44"
+                        />
+                      </div>
+                      {newTagInput.trim() && (
+                        <button
+                          onClick={() => handleAddTag()}
+                          className="px-2 py-0.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 transition cursor-pointer"
+                        >
+                          যোগ
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Quick-add popular existing tags */}
+                  {allUniqueTags.filter((t) => !tags.includes(t)).length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 pt-1">
+                      <span>প্রস্তাবিত ট্যাগ:</span>
+                      {allUniqueTags
+                        .filter((t) => !tags.includes(t))
+                        .slice(0, 5)
+                        .map((suggestedTag) => (
+                          <button
+                            key={suggestedTag}
+                            onClick={() => handleAddTag(suggestedTag)}
+                            className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-indigo-500 dark:hover:border-indigo-400 transition cursor-pointer"
+                          >
+                            <Plus className="w-2.5 h-2.5 text-indigo-500" />
+                            {suggestedTag}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Content Textarea */}
@@ -694,8 +1747,8 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   rows={14}
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
-                  placeholder="এখানে আপনার নোট, চিন্তা, চেকলিস্ট বা মিটিংয়ের সারাংশ লিখুন..."
-                  className="w-full text-sm sm:text-base text-slate-800 dark:text-slate-100 leading-relaxed border-none focus:outline-none placeholder-slate-300 dark:placeholder-slate-600 resize-none font-sans bg-transparent"
+                  placeholder="এখানে আপনার নোট, চেকলিস্ট বা মিটিংয়ের বিস্তারিত লিখুন..."
+                  className="w-full text-sm sm:text-base text-slate-800 dark:text-slate-100 leading-relaxed border-none focus:outline-none placeholder-slate-300 dark:placeholder-slate-600 resize-none font-sans bg-transparent min-h-[300px]"
                 />
               </div>
 
@@ -705,8 +1758,9 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   <span>শব্দ সংখ্যা: <strong className="text-slate-600 dark:text-slate-300">{wordCount}</strong></span>
                   <span>অক্ষর সংখ্যা: <strong className="text-slate-600 dark:text-slate-300">{charCount}</strong></span>
                 </div>
-                <div>
-                  Markdown & টেক্সট সমর্থিত
+                <div className="flex items-center gap-1 text-[11px]">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                  Markdown ও অটো-ব্যাকআপ সক্রিয়
                 </div>
               </div>
             </>
@@ -718,7 +1772,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                 বাম পাশের তালিকা থেকে একটি নোট বেছে নিন অথবা নতুন নোট তৈরি করুন।
               </p>
               <button
-                onClick={handleCreateNewNote}
+                onClick={() => handleCreateNewNote()}
                 className="px-5 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition cursor-pointer"
               >
                 + নতুন নোট তৈরি করুন

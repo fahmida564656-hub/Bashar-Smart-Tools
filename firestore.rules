@@ -43,6 +43,11 @@ service cloud.firestore {
       match /notes/{noteId} {
         allow read, write: if isOwner(userId) && isValidId(noteId);
       }
+
+      // Note folders subcollection
+      match /folders/{folderId} {
+        allow read, write: if isOwner(userId) && isValidId(folderId);
+      }
     }
   }
 }
