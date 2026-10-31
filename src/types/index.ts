@@ -95,6 +95,7 @@ export interface SmartNote {
   color: string;
   isPinned: boolean;
   isArchived: boolean;
+  archivedAt?: string;
   tags?: string[];
   createdAt: string;
   updatedAt: string;

@@ -34,7 +34,8 @@ import {
   CheckCircle2,
   SlidersHorizontal,
   FileQuestion,
-  CornerDownLeft
+  RotateCcw,
+  Inbox
 } from 'lucide-react';
 
 const NOTE_COLORS = [
@@ -135,6 +136,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
   const [selectedColor, setSelectedColor] = useState<string>('indigo');
   const [isPinned, setIsPinned] = useState<boolean>(false);
   const [isArchived, setIsArchived] = useState<boolean>(false);
+  const [archivedAt, setArchivedAt] = useState<string | undefined>(undefined);
 
   // Tag Input in Editor
   const [newTagInput, setNewTagInput] = useState<string>('');
@@ -146,6 +148,13 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
   const [selectedFolderFilter, setSelectedFolderFilter] = useState<string>('all'); // 'all', 'pinned', 'archived', 'uncategorized', or folderId
   const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
 
+  // Toast feedback state with Undo option
+  const [toast, setToast] = useState<{
+    id: string;
+    message: string;
+    undoAction?: () => void;
+  } | null>(null);
+
   // Folder Management Modals / Forms
   const [isCreatingFolder, setIsCreatingFolder] = useState<boolean>(false);
   const [newFolderName, setNewFolderName] = useState<string>('');
@@ -156,11 +165,24 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const autoSaveTimerRef = useRef<any>(null);
+  const toastTimeoutRef = useRef<any>(null);
+
+  // Show Toast helper
+  const showToast = (message: string, undoAction?: () => void) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToast({
+      id: Date.now().toString(),
+      message,
+      undoAction,
+    });
+    toastTimeoutRef.current = setTimeout(() => {
+      setToast(null);
+    }, 4500);
+  };
 
   // Global Keyboard Shortcut: '/' to focus search input
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // If user pressed '/' and not inside an input/textarea
       const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       if (e.key === '/' && targetTag !== 'input' && targetTag !== 'textarea') {
         e.preventDefault();
@@ -331,6 +353,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     setSelectedColor(note.color || 'indigo');
     setIsPinned(note.isPinned || false);
     setIsArchived(note.isArchived || false);
+    setArchivedAt(note.archivedAt);
     setSaveStatus('saved');
   };
 
@@ -391,6 +414,11 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
       } catch (e) {}
     }
 
+    // If currently looking at archived, switch to all notes
+    if (selectedFolderFilter === 'archived') {
+      setSelectedFolderFilter('all');
+    }
+
     loadNoteIntoEditor(newNoteData);
     setSaveStatus('saved');
   };
@@ -422,6 +450,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
             color: selectedColor,
             isPinned,
             isArchived,
+            archivedAt: archivedAt || null,
             updatedAt: updatedTime,
           });
           setSaveStatus('saved');
@@ -445,6 +474,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   color: selectedColor,
                   isPinned,
                   isArchived,
+                  archivedAt,
                   updatedAt: updatedTime,
                 }
               : n
@@ -461,7 +491,71 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [title, content, category, folderId, folderName, tags, selectedColor, isPinned, isArchived]);
+  }, [title, content, category, folderId, folderName, tags, selectedColor, isPinned, isArchived, archivedAt]);
+
+  // Dedicated Archive or Restore Function
+  const handleSetNoteArchive = async (targetNoteId: string, shouldArchive: boolean) => {
+    if (!user) return;
+
+    const timeStamp = shouldArchive ? new Date().toISOString() : null;
+
+    if (targetNoteId === activeNoteId) {
+      setIsArchived(shouldArchive);
+      setArchivedAt(timeStamp || undefined);
+    }
+
+    if (auth.currentUser) {
+      try {
+        const noteRef = doc(db, 'users', user.uid, 'notes', targetNoteId);
+        await updateDoc(noteRef, {
+          isArchived: shouldArchive,
+          archivedAt: timeStamp,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('Error toggling archive:', err);
+      }
+    } else {
+      const userKey = `bashar_notes_${user.uid}`;
+      setNotes((prev) => {
+        const next = prev.map((n) =>
+          n.id === targetNoteId
+            ? { ...n, isArchived: shouldArchive, archivedAt: timeStamp || undefined }
+            : n
+        );
+        try {
+          localStorage.setItem(userKey, JSON.stringify(next));
+        } catch (e) {}
+        return next;
+      });
+    }
+
+    if (shouldArchive) {
+      showToast('নোটটি সফলভাবে আর্কাইভে স্থানান্তর করা হয়েছে', () => {
+        handleSetNoteArchive(targetNoteId, false);
+      });
+
+      // If viewing active notes and just archived the active note, advance to next active note
+      if (selectedFolderFilter !== 'archived' && targetNoteId === activeNoteId) {
+        const remainingActive = notes.filter((n) => !n.isArchived && n.id !== targetNoteId);
+        if (remainingActive.length > 0) {
+          loadNoteIntoEditor(remainingActive[0]);
+        }
+      }
+    } else {
+      showToast('নোটটি সক্রিয় তালিকায় ফিরিয়ে আনা হয়েছে (Restored)', () => {
+        handleSetNoteArchive(targetNoteId, true);
+      });
+
+      // If viewing archived notes and just restored the active note, advance to next archived note
+      if (selectedFolderFilter === 'archived' && targetNoteId === activeNoteId) {
+        const remainingArchived = notes.filter((n) => n.isArchived && n.id !== targetNoteId);
+        if (remainingArchived.length > 0) {
+          loadNoteIntoEditor(remainingArchived[0]);
+        }
+      }
+    }
+  };
 
   // Folder Assignment
   const handleAssignFolder = (targetFolderId: string) => {
@@ -616,33 +710,18 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     }
   };
 
-  // Toggle Archive
-  const handleToggleArchive = async () => {
-    const nextArchive = !isArchived;
-    setIsArchived(nextArchive);
-    if (activeNoteId && user) {
-      if (auth.currentUser) {
-        try {
-          await updateDoc(doc(db, 'users', user.uid, 'notes', activeNoteId), {
-            isArchived: nextArchive,
-            updatedAt: new Date().toISOString(),
-          });
-        } catch (e) {}
-      } else {
-        const userKey = `bashar_notes_${user.uid}`;
-        setNotes((prev) => {
-          const next = prev.map((n) => (n.id === activeNoteId ? { ...n, isArchived: nextArchive } : n));
-          try {
-            localStorage.setItem(userKey, JSON.stringify(next));
-          } catch (e) {}
-          return next;
-        });
-      }
-    }
-  };
-
   // Delete note
   const handleDeleteNote = async (idToDelete: string) => {
+    const noteToDelete = notes.find((n) => n.id === idToDelete);
+    const isCurrentlyArchived = noteToDelete?.isArchived;
+
+    if (
+      isCurrentlyArchived &&
+      !confirm('আপনি কি এই আর্কাইভকৃত নোটটি স্থায়ীভাবে মুছে ফেলতে চান? এটি আর ফিরিয়ে আনা যাবে না।')
+    ) {
+      return;
+    }
+
     if (!user) return;
     if (auth.currentUser) {
       try {
@@ -660,6 +739,8 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         return remaining;
       });
     }
+
+    showToast('নোটটি মুছে ফেলা হয়েছে');
 
     if (activeNoteId === idToDelete) {
       const remaining = notes.filter((n) => n.id !== idToDelete);
@@ -710,6 +791,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         } catch (e) {}
         loadNoteIntoEditor(newObj);
       }
+      showToast('নোটের কপি তৈরি করা হয়েছে');
     } catch (e) {}
   };
 
@@ -717,6 +799,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
   const handleExportNote = () => {
     const metaHeader = [
       `# ${title || 'শিরোনামহীন নোট'}`,
+      isArchived ? '> অবস্থা: আর্কাইভকৃত (Archived)' : '',
       folderName ? `> ফোল্ডার: ${folderName}` : '',
       tags.length > 0 ? `> ট্যাগ: ${tags.map((t) => `#${t}`).join(', ')}` : '',
       `> তারিখ: ${new Date().toLocaleDateString('bn-BD')}`,
@@ -759,7 +842,9 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
   // Real-time filtering by folder, tag, search query (title + content), and searchScope
   const filteredNotes = useMemo(() => {
     return notes.filter((n) => {
-      // Archived filter
+      // Archive Separation:
+      // If user selected 'archived', show only archived notes!
+      // If user is in ANY other view ('all', 'pinned', 'uncategorized', or specific folder), NEVER show archived notes!
       if (selectedFolderFilter === 'archived') {
         if (!n.isArchived) return false;
       } else {
@@ -794,7 +879,6 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         if (searchScope === 'content') {
           return matchContent;
         }
-        // 'all': matches title, content, folder name, or tags
         return matchTitle || matchContent || matchFolder || matchTags;
       }
 
@@ -802,15 +886,15 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     });
   }, [notes, selectedFolderFilter, selectedTagFilter, searchQuery, searchScope]);
 
-  // Auto-switch to first matching note if current active note is not in filtered results during active search
+  // Auto-switch to first matching note if current active note is not in filtered results during active filter/search
   useEffect(() => {
-    if (searchQuery.trim() && filteredNotes.length > 0) {
+    if (filteredNotes.length > 0) {
       const isCurrentInResults = filteredNotes.some((n) => n.id === activeNoteId);
       if (!isCurrentInResults) {
         loadNoteIntoEditor(filteredNotes[0]);
       }
     }
-  }, [searchQuery, searchScope, filteredNotes, activeNoteId]);
+  }, [selectedFolderFilter, selectedTagFilter, searchQuery, searchScope, filteredNotes, activeNoteId]);
 
   // Count search term matches in active note
   const activeNoteMatchCount = useMemo(() => {
@@ -839,23 +923,81 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
   const charCount = content.length;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
+    <div className="max-w-7xl mx-auto px-4 py-8 relative">
+      {/* Toast Feedback Notification with Undo */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 bg-slate-900 text-white rounded-2xl shadow-xl border border-slate-700 text-xs animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            <span>{toast.message}</span>
+          </div>
+          {toast.undoAction && (
+            <button
+              onClick={() => {
+                toast.undoAction?.();
+                setToast(null);
+              }}
+              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg transition cursor-pointer flex items-center gap-1 ml-2"
+            >
+              <RotateCcw className="w-3 h-3" />
+              পূর্বাবস্থায় আনুন (Undo)
+            </button>
+          )}
+          <button
+            onClick={() => setToast(null)}
+            className="text-slate-400 hover:text-white cursor-pointer ml-1"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Top Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 mb-2">
             <Sparkles className="w-3.5 h-3.5" />
-            রিয়েল-টাইম সার্চ, ফোল্ডার ও ট্যাগ ব্যবস্থাপনা (Smart Notes)
+            স্মার্ট নোট, আর্কাইভ ও ট্যাগ অর্গানাইজার (Smart Notes)
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">
             Bashar Smart Notes
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            শিরোনাম ও বিষয়বস্তুতে রিয়েল-টাইম সার্চ, কিওয়ার্ড হাইলাইটিং, ফোল্ডার ও ক্লাউড অটো-সেভ।
+            আর্কাইভ সিস্টেম, রিয়েল-টাইম সার্চ, ফোল্ডার ও ক্লাউড অটো-সেভ সম্বলিত সম্পূর্ণ নোটপ্যাড।
           </p>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Quick toggle to Archive from Top Banner */}
+          <button
+            onClick={() => {
+              if (selectedFolderFilter === 'archived') {
+                setSelectedFolderFilter('all');
+              } else {
+                setSelectedFolderFilter('archived');
+                setSelectedTagFilter(null);
+              }
+            }}
+            className={`px-3 py-2 text-xs font-semibold rounded-xl border transition cursor-pointer flex items-center gap-1.5 ${
+              selectedFolderFilter === 'archived'
+                ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700'
+            }`}
+            title={selectedFolderFilter === 'archived' ? 'সক্রিয় নোটগুলোতে ফিরুন' : 'আর্কাইভকৃত নোট দেখুন'}
+          >
+            <Archive className="w-3.5 h-3.5" />
+            <span>{selectedFolderFilter === 'archived' ? 'সক্রিয় নোটসমূহ' : 'আর্কাইভ'}</span>
+            <span
+              className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                selectedFolderFilter === 'archived'
+                  ? 'bg-purple-700 text-white'
+                  : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+              }`}
+            >
+              {archivedCount}
+            </span>
+          </button>
+
           <button
             onClick={() => setShowFolderSidebar(!showFolderSidebar)}
             className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
@@ -879,7 +1021,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-amber-800 dark:text-amber-200 text-xs sm:text-sm">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-5 h-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-            <span>নোট এবং কাস্টম ফোল্ডারগুলো ক্লাউডে স্থায়ীভাবে সেভ রাখতে অনুগ্রহ করে লগইন করুন।</span>
+            <span>নোট এবং আর্কাইভগুলো ক্লাউডে স্থায়ীভাবে সেভ রাখতে অনুগ্রহ করে লগইন করুন।</span>
           </div>
           <button
             onClick={onOpenAuth}
@@ -892,7 +1034,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
 
       {/* Main 3-Column / Responsive Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column 1: Folder & Tag Organization Tree */}
+        {/* Left Column 1: Folder, Views & Tag Navigator */}
         {showFolderSidebar && (
           <div className="lg:col-span-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs p-4 space-y-6">
             {/* Quick Views */}
@@ -913,8 +1055,8 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <Layers className="w-4 h-4" />
-                    <span>সকল নোট (All Notes)</span>
+                    <Inbox className="w-4 h-4" />
+                    <span>সকল সক্রিয় নোট (Active)</span>
                   </div>
                   <span
                     className={`text-[11px] px-2 py-0.5 rounded-full ${
@@ -953,6 +1095,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   </span>
                 </button>
 
+                {/* Dedicated Archive View Tab */}
                 <button
                   onClick={() => {
                     setSelectedFolderFilter('archived');
@@ -960,18 +1103,18 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
                     selectedFolderFilter === 'archived'
-                      ? 'bg-indigo-600 text-white shadow-xs font-semibold'
-                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      ? 'bg-purple-600 text-white shadow-xs font-semibold'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-purple-50 dark:hover:bg-purple-950/40'
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <Archive className="w-4 h-4 text-purple-500" />
-                    <span>আর্কাইভ (Archived)</span>
+                    <Archive className="w-4 h-4 text-purple-400" />
+                    <span>আর্কাইভ (Archived Notes)</span>
                   </div>
                   <span
                     className={`text-[11px] px-2 py-0.5 rounded-full ${
                       selectedFolderFilter === 'archived'
-                        ? 'bg-indigo-700 text-indigo-100'
+                        ? 'bg-purple-700 text-white'
                         : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
                     }`}
                   >
@@ -1227,6 +1370,27 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
 
         {/* Middle Column 2: Filtered Notes Sidebar / Real-Time Search List */}
         <div className={`${showFolderSidebar ? 'lg:col-span-4' : 'lg:col-span-5'} bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs p-4 space-y-3`}>
+          {/* Dedicated Archive View Banner if viewing Archived */}
+          {selectedFolderFilter === 'archived' && (
+            <div className="p-3 bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/70 rounded-xl flex items-center justify-between text-xs text-purple-900 dark:text-purple-200">
+              <div className="flex items-center gap-2 min-w-0">
+                <Archive className="w-4 h-4 text-purple-600 dark:text-purple-400 flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-semibold truncate">আর্কাইভকৃত নোটসমূহ ({archivedCount})</p>
+                  <p className="text-[11px] text-purple-700 dark:text-purple-300 opacity-90 truncate">
+                    পুরনো বা সম্পন্ন নোট মূল তালিকা থেকে সরিয়ে নিরাপদে রাখা হয়েছে।
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedFolderFilter('all')}
+                className="px-2.5 py-1 text-[11px] font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition cursor-pointer flex-shrink-0 ml-2"
+              >
+                সক্রিয় নোটে যান
+              </button>
+            </div>
+          )}
+
           {/* Real-time Search Box */}
           <div className="space-y-2">
             <div className="relative">
@@ -1241,7 +1405,11 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                     setSearchQuery('');
                   }
                 }}
-                placeholder="শিরোনাম বা বিষয়বস্তু দিয়ে রিয়েল-টাইম সার্চ... ('/' চাপুন)"
+                placeholder={
+                  selectedFolderFilter === 'archived'
+                    ? 'আর্কাইভকৃত নোটে খুঁজুন...'
+                    : "শিরোনাম বা টেক্সটে রিয়েল-টাইম সার্চ... ('/' চাপুন)"
+                }
                 className="w-full pl-10 pr-9 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 dark:bg-slate-800/50 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none transition shadow-2xs"
               />
               {searchQuery ? (
@@ -1267,7 +1435,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
               <div className="flex items-center gap-1">
                 <span className="text-slate-400 dark:text-slate-500 mr-1 flex items-center gap-0.5">
                   <SlidersHorizontal className="w-2.5 h-2.5" />
-                  সার্চ স্কোপ:
+                  স্কোপ:
                 </span>
                 <button
                   type="button"
@@ -1278,7 +1446,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
                   }`}
                 >
-                  উভয় (All)
+                  উভয়
                 </button>
                 <button
                   type="button"
@@ -1289,7 +1457,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
                   }`}
                 >
-                  শুধু শিরোনাম
+                  শিরোনাম
                 </button>
                 <button
                   type="button"
@@ -1300,7 +1468,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
                   }`}
                 >
-                  শুধু টেক্সট
+                  টেক্সট
                 </button>
               </div>
 
@@ -1328,12 +1496,22 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   ফিল্টার:
                 </span>
                 {selectedFolderFilter !== 'all' && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[11px] font-medium">
-                    <Folder className="w-3 h-3" />
+                  <span
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border ${
+                      selectedFolderFilter === 'archived'
+                        ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800'
+                        : 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
+                    }`}
+                  >
+                    {selectedFolderFilter === 'archived' ? (
+                      <Archive className="w-3 h-3" />
+                    ) : (
+                      <Folder className="w-3 h-3" />
+                    )}
                     {selectedFolderFilter === 'pinned'
                       ? 'পিন করা'
                       : selectedFolderFilter === 'archived'
-                      ? 'আর্কাইভ'
+                      ? 'আর্কাইভকৃত'
                       : selectedFolderFilter === 'uncategorized'
                       ? 'সাধারণ'
                       : folders.find((f) => f.id === selectedFolderFilter)?.name || 'ফোল্ডার'}
@@ -1373,7 +1551,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
             </div>
           )}
 
-          {/* Notes List with Real-time Keyword Highlighting */}
+          {/* Notes List with Real-time Keyword Highlighting and Quick Archive Action */}
           <div className="space-y-2 max-h-[620px] overflow-y-auto pr-1">
             {loading ? (
               <div className="py-12 text-center text-slate-400">
@@ -1382,20 +1560,37 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
               </div>
             ) : filteredNotes.length === 0 ? (
               <div className="py-10 text-center bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800 p-5 space-y-3">
-                <FileQuestion className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto" />
-                <div>
-                  <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                    {searchQuery.trim()
-                      ? `"${searchQuery}" সংক্রান্ত কোনো নোট পাওয়া যায়নি`
-                      : 'কোনো নোট পাওয়া যায়নি'}
-                  </p>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-                    {searchQuery.trim()
-                      ? 'সার্চ টার্ম পরিবর্তন করে দেখতে পারেন অথবা এই নামে সরাসরি নতুন নোট তৈরি করুন।'
-                      : 'উপরে "+ নতুন নোট তৈরি" বাটনে ক্লিক করে নোট শুরু করুন।'}
-                  </p>
-                </div>
-                {searchQuery.trim() ? (
+                {selectedFolderFilter === 'archived' ? (
+                  <>
+                    <Archive className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto" />
+                    <div>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                        আর্কাইভে কোনো নোট নেই
+                      </p>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                        যেসব কাজ সম্পন্ন হয়েছে বা পুরনো নোট আপনি প্রধান তালিকা পরিষ্কার রাখতে আর্কাইভে পাঠাতে পারেন।
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <FileQuestion className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto" />
+                    <div>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                        {searchQuery.trim()
+                          ? `"${searchQuery}" সংক্রান্ত কোনো নোট পাওয়া যায়নি`
+                          : 'কোনো নোট পাওয়া যায়নি'}
+                      </p>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                        {searchQuery.trim()
+                          ? 'সার্চ টার্ম পরিবর্তন করে দেখতে পারেন অথবা এই নামে সরাসরি নতুন নোট তৈরি করুন।'
+                          : 'উপরে "+ নতুন নোট তৈরি" বাটনে ক্লিক করে নোট শুরু করুন।'}
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                {searchQuery.trim() && (
                   <div className="flex items-center justify-center gap-2 pt-1">
                     <button
                       onClick={() => setSearchQuery('')}
@@ -1408,10 +1603,10 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                       className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition cursor-pointer inline-flex items-center gap-1"
                     >
                       <Plus className="w-3 h-3" />
-                      &ldquo;{searchQuery.slice(0, 15)}&rdquo; নোট তৈরি
+                      নতুন নোট তৈরি
                     </button>
                   </div>
-                ) : null}
+                )}
               </div>
             ) : (
               filteredNotes.map((note) => {
@@ -1419,15 +1614,13 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                 const colorConfig = NOTE_COLORS.find((c) => c.id === note.color) || NOTE_COLORS[0];
                 const matchedFolder = folders.find((f) => f.id === note.folderId);
                 const folderColorObj = matchedFolder ? FOLDER_COLORS.find((c) => c.id === matchedFolder.color) : null;
-
-                // Match snippet for content preview
                 const contentSnippet = getSnippetWithMatch(note.content, searchQuery, 90);
 
                 return (
                   <div
                     key={note.id}
                     onClick={() => loadNoteIntoEditor(note)}
-                    className={`p-3.5 rounded-xl border transition-all cursor-pointer relative ${
+                    className={`group p-3.5 rounded-xl border transition-all cursor-pointer relative ${
                       isActive
                         ? 'border-indigo-600 dark:border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/40 shadow-xs ring-2 ring-indigo-200/50 dark:ring-indigo-800/40'
                         : 'border-slate-100 dark:border-slate-800/80 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900/60 hover:bg-slate-50/60 dark:hover:bg-slate-800/50'
@@ -1444,12 +1637,36 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                       </div>
 
                       <div className="flex items-center gap-1 flex-shrink-0">
-                        {note.isPinned && (
+                        {note.isPinned && !note.isArchived && (
                           <Pin className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
                         )}
                         {note.isArchived && (
-                          <Archive className="w-3.5 h-3.5 text-purple-400" />
+                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 font-semibold">
+                            <Archive className="w-2.5 h-2.5" />
+                            আর্কাইভ
+                          </span>
                         )}
+
+                        {/* Quick Card Archive / Unarchive Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSetNoteArchive(note.id, !note.isArchived);
+                          }}
+                          className={`p-1 rounded-lg transition opacity-80 group-hover:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer ${
+                            note.isArchived
+                              ? 'text-purple-600 dark:text-purple-400'
+                              : 'text-slate-400 hover:text-purple-600 dark:hover:text-purple-400'
+                          }`}
+                          title={note.isArchived ? 'আর্কাইভ থেকে ফিরিয়ে আনুন (Restore)' : 'আর্কাইভে পাঠান (Archive)'}
+                        >
+                          {note.isArchived ? (
+                            <ArchiveRestore className="w-3.5 h-3.5" />
+                          ) : (
+                            <Archive className="w-3.5 h-3.5" />
+                          )}
+                        </button>
                       </div>
                     </div>
 
@@ -1518,6 +1735,30 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         <div className={`${showFolderSidebar ? 'lg:col-span-5' : 'lg:col-span-7'} bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs p-6 space-y-4`}>
           {activeNoteId ? (
             <>
+              {/* Dedicated Archived Banner in Active Editor */}
+              {isArchived && (
+                <div className="p-3 bg-purple-50 dark:bg-purple-950/50 border border-purple-200 dark:border-purple-800/80 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-purple-900 dark:text-purple-200">
+                  <div className="flex items-center gap-2">
+                    <Archive className="w-4 h-4 text-purple-600 dark:text-purple-400 flex-shrink-0" />
+                    <div>
+                      <p className="font-semibold">এই নোটটি আর্কাইভে সংরক্ষিত আছে (Archived Note)</p>
+                      <p className="text-[11px] text-purple-700 dark:text-purple-300">
+                        {archivedAt
+                          ? `আর্কাইভের তারিখ: ${new Date(archivedAt).toLocaleDateString('bn-BD')}`
+                          : 'এটি প্রধান তালিকা থেকে আড়াল করা রয়েছে।'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleSetNoteArchive(activeNoteId, false)}
+                    className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 flex-shrink-0"
+                  >
+                    <ArchiveRestore className="w-3.5 h-3.5" />
+                    নোট পুনরুদ্ধার করুন (Restore)
+                  </button>
+                </div>
+              )}
+
               {/* Real-time Search Occurrence Banner in Active Note */}
               {searchQuery.trim() && (
                 <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-xl flex items-center justify-between text-xs text-amber-900 dark:text-amber-200">
@@ -1589,12 +1830,21 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                     {isPinned ? <Pin className="w-4 h-4 fill-amber-500" /> : <Pin className="w-4 h-4" />}
                   </button>
 
+                  {/* Archive / Unarchive Button */}
                   <button
-                    onClick={handleToggleArchive}
-                    className="p-2 rounded-xl text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/50 transition cursor-pointer"
-                    title={isArchived ? 'আর্কাইভ থেকে ফিরিয়ে আনুন' : 'আর্কাইভে পাঠান'}
+                    onClick={() => handleSetNoteArchive(activeNoteId, !isArchived)}
+                    className={`p-2 rounded-xl transition cursor-pointer ${
+                      isArchived
+                        ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 ring-1 ring-purple-300 dark:ring-purple-700'
+                        : 'text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/50'
+                    }`}
+                    title={isArchived ? 'আর্কাইভ থেকে ফিরিয়ে আনুন (Restore)' : 'আর্কাইভে পাঠান (Archive)'}
                   >
-                    {isArchived ? <ArchiveRestore className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
+                    {isArchived ? (
+                      <ArchiveRestore className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                    ) : (
+                      <Archive className="w-4 h-4" />
+                    )}
                   </button>
 
                   <button
@@ -1616,7 +1866,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   <button
                     onClick={() => handleDeleteNote(activeNoteId)}
                     className="p-2 rounded-xl text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition cursor-pointer"
-                    title="মুছে ফেলুন"
+                    title={isArchived ? 'স্থায়ীভাবে মুছে ফেলুন' : 'মুছে ফেলুন'}
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>

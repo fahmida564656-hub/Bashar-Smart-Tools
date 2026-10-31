@@ -68,6 +68,7 @@
         "color": { "type": "string", "maxLength": 30, "description": "Color tag" },
         "isPinned": { "type": "boolean", "description": "Whether the note is pinned to top" },
         "isArchived": { "type": "boolean", "description": "Whether the note is archived" },
+        "archivedAt": { "type": "string", "maxLength": 50, "description": "Timestamp when note was archived" },
         "createdAt": { "type": "string", "maxLength": 50, "description": "Creation timestamp" },
         "updatedAt": { "type": "string", "maxLength": 50, "description": "Last edited timestamp" }
       },
