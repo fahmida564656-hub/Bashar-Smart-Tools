@@ -62,6 +62,8 @@
         "title": { "type": "string", "maxLength": 200, "description": "Title of the note" },
         "content": { "type": "string", "maxLength": 50000, "description": "Note content body" },
         "category": { "type": "string", "maxLength": 50, "description": "Category or folder" },
+        "categories": { "type": "array", "items": { "type": "string" }, "description": "Multiple category labels assigned to the note" },
+        "labels": { "type": "array", "items": { "type": "string" }, "description": "Custom color/text labels assigned to the note" },
         "folderId": { "type": "string", "maxLength": 128, "description": "Associated folder ID" },
         "folderName": { "type": "string", "maxLength": 100, "description": "Associated folder display name" },
         "tags": { "type": "array", "items": { "type": "string" }, "description": "Tag labels assigned to the note" },

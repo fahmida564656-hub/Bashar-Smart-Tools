@@ -90,6 +90,8 @@ export interface SmartNote {
   title: string;
   content: string;
   category: string;
+  categories?: string[];
+  labels?: string[];
   folderId?: string;
   folderName?: string;
   color: string;

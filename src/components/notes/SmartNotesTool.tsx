@@ -35,7 +35,16 @@ import {
   SlidersHorizontal,
   FileQuestion,
   RotateCcw,
-  Inbox
+  Inbox,
+  Mic,
+  MicOff,
+  Radio,
+  CheckSquare,
+  Square,
+  ChevronDown,
+  Tags,
+  Globe,
+  Volume2
 } from 'lucide-react';
 
 const NOTE_COLORS = [
@@ -61,6 +70,17 @@ const DEFAULT_FOLDERS: Array<{ name: string; color: string }> = [
   { name: 'ব্যক্তিগত (Personal)', color: 'emerald' },
   { name: 'পড়াশোনা ও প্রস্তুতি (Study)', color: 'amber' },
   { name: 'আইডিয়া ও পরিকল্পনা (Ideas)', color: 'purple' },
+];
+
+const PRESET_CATEGORIES = [
+  'কাজের নোট',
+  'ব্যক্তিগত',
+  'পড়াশোনা ও রিসার্চ',
+  'আইডিয়া ও চিন্তা',
+  'জরুরি',
+  'পরিকল্পনা',
+  'ফাইন্যান্স ও বাজেট',
+  'প্রজেক্ট',
 ];
 
 export type SearchScope = 'all' | 'title' | 'content';
@@ -130,6 +150,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
   const [title, setTitle] = useState<string>('');
   const [content, setContent] = useState<string>('');
   const [category, setCategory] = useState<string>('সকল নোট');
+  const [categories, setCategories] = useState<string[]>([]);
   const [folderId, setFolderId] = useState<string>('');
   const [folderName, setFolderName] = useState<string>('');
   const [tags, setTags] = useState<string[]>([]);
@@ -138,15 +159,25 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
   const [isArchived, setIsArchived] = useState<boolean>(false);
   const [archivedAt, setArchivedAt] = useState<string | undefined>(undefined);
 
-  // Tag Input in Editor
+  // Tag & Multi-select Category Input in Editor
   const [newTagInput, setNewTagInput] = useState<string>('');
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState<boolean>(false);
+  const [newCustomCategoryInput, setNewCustomCategoryInput] = useState<string>('');
+
+  // Speech Recognition (Voice-to-Text) State
+  const [isListening, setIsListening] = useState<boolean>(false);
+  const [speechLang, setSpeechLang] = useState<'bn-BD' | 'en-US'>('bn-BD');
+  const [speechTarget, setSpeechTarget] = useState<'content' | 'title'>('content');
+  const [speechInterim, setSpeechInterim] = useState<string>('');
+  const recognitionRef = useRef<any>(null);
 
   // Status & Real-time Filters
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchScope, setSearchScope] = useState<SearchScope>('all'); // 'all', 'title', 'content'
   const [selectedFolderFilter, setSelectedFolderFilter] = useState<string>('all'); // 'all', 'pinned', 'archived', 'uncategorized', or folderId
-  const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
+  const [selectedCategoryFilters, setSelectedCategoryFilters] = useState<string[]>([]);
+  const [selectedTagFilters, setSelectedTagFilters] = useState<string[]>([]);
 
   // Toast feedback state with Undo option
   const [toast, setToast] = useState<{
@@ -166,6 +197,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
   const searchInputRef = useRef<HTMLInputElement>(null);
   const autoSaveTimerRef = useRef<any>(null);
   const toastTimeoutRef = useRef<any>(null);
+  const categoryDropdownRef = useRef<HTMLDivElement>(null);
 
   // Show Toast helper
   const showToast = (message: string, undoAction?: () => void) => {
@@ -179,6 +211,20 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
       setToast(null);
     }, 4500);
   };
+
+  // Close category dropdown on outside click
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (
+        categoryDropdownRef.current &&
+        !categoryDropdownRef.current.contains(e.target as Node)
+      ) {
+        setIsCategoryDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
 
   // Global Keyboard Shortcut: '/' to focus search input
   useEffect(() => {
@@ -346,7 +392,11 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     setActiveNoteId(note.id);
     setTitle(note.title);
     setContent(note.content);
-    setCategory(note.category || 'সকল নোট');
+    setCategory(note.category || 'সাধারণ নোট');
+    const noteCategories = note.categories && note.categories.length > 0
+      ? note.categories
+      : (note.category ? [note.category] : ['সাধারণ নোট']);
+    setCategories(noteCategories);
     setFolderId(note.folderId || '');
     setFolderName(note.folderName || '');
     setTags(note.tags || []);
@@ -374,9 +424,10 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
       title: customInitialTitle || 'নতুন শিরোনামহীন নোট',
       content: '',
       category: initialFolderName || 'সাধারণ নোট',
+      categories: initialFolderName ? [initialFolderName] : ['সাধারণ নোট'],
       folderId: initialFolderId,
       folderName: initialFolderName,
-      tags: selectedTagFilter ? [selectedTagFilter] : [],
+      tags: selectedTagFilters.length > 0 ? [...selectedTagFilters] : [],
       color: 'indigo',
       isPinned: false,
       isArchived: false,
@@ -392,6 +443,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
           title: newNoteData.title,
           content: newNoteData.content,
           category: newNoteData.category,
+          categories: newNoteData.categories,
           folderId: newNoteData.folderId,
           folderName: newNoteData.folderName,
           tags: newNoteData.tags,
@@ -414,7 +466,6 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
       } catch (e) {}
     }
 
-    // If currently looking at archived, switch to all notes
     if (selectedFolderFilter === 'archived') {
       setSelectedFolderFilter('all');
     }
@@ -436,6 +487,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     autoSaveTimerRef.current = setTimeout(async () => {
       const updatedTime = new Date().toISOString();
       const updatedTitle = title.trim() || 'শিরোনামহীন নোট';
+      const mainCategory = categories.length > 0 ? categories[0] : (category || 'সাধারণ নোট');
 
       if (auth.currentUser) {
         try {
@@ -443,7 +495,8 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
           await updateDoc(noteRef, {
             title: updatedTitle,
             content,
-            category,
+            category: mainCategory,
+            categories,
             folderId,
             folderName,
             tags,
@@ -467,7 +520,8 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   ...n,
                   title: updatedTitle,
                   content,
-                  category,
+                  category: mainCategory,
+                  categories,
                   folderId,
                   folderName,
                   tags,
@@ -491,7 +545,104 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [title, content, category, folderId, folderName, tags, selectedColor, isPinned, isArchived, archivedAt]);
+  }, [title, content, category, categories, folderId, folderName, tags, selectedColor, isPinned, isArchived, archivedAt]);
+
+  // Speech Recognition (Voice-to-Text) Handler
+  const toggleSpeechRecognition = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      showToast('আপনার ব্রাউজার Web Speech Recognition সমর্থন করে না। Chrome বা Edge ব্রাউজার ব্যবহার করুন।');
+      return;
+    }
+
+    if (isListening) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {}
+      }
+      setIsListening(false);
+      setSpeechInterim('');
+      showToast('ভয়েস টাইপিং সম্পন্ন হয়েছে');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = speechLang;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setSpeechInterim('');
+        showToast(speechLang === 'bn-BD' ? '🎤 কথা বলুন... রেকর্ড হচ্ছে' : '🎤 Listening... Speak now');
+      };
+
+      recognition.onresult = (event: any) => {
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcriptChunk = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcriptChunk;
+          } else {
+            interimTranscript += transcriptChunk;
+          }
+        }
+
+        setSpeechInterim(interimTranscript);
+
+        if (finalTranscript) {
+          const cleanFinal = finalTranscript.trim();
+          if (cleanFinal) {
+            if (speechTarget === 'title') {
+              setTitle((prev) => (prev ? `${prev} ${cleanFinal}` : cleanFinal));
+            } else {
+              setContent((prev) => (prev ? `${prev} ${cleanFinal}` : cleanFinal));
+            }
+          }
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListening(false);
+        setSpeechInterim('');
+        if (event.error === 'not-allowed') {
+          showToast('মাইক্রোফোন ব্যবহারের অনুমতি দেওয়া হয়নি। অনুগ্রহ করে অনুমতি দিন।');
+        } else if (event.error !== 'no-speech') {
+          showToast(`ভয়েস টাইপিং ত্রুটি: ${event.error}`);
+        }
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        setSpeechInterim('');
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err: any) {
+      console.error('Failed to start speech recognition:', err);
+      setIsListening(false);
+      showToast('ভয়েস টাইপিং চালু করতে সমস্যা হয়েছে');
+    }
+  };
+
+  // Cleanup speech on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {}
+      }
+    };
+  }, []);
 
   // Dedicated Archive or Restore Function
   const handleSetNoteArchive = async (targetNoteId: string, shouldArchive: boolean) => {
@@ -535,7 +686,6 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         handleSetNoteArchive(targetNoteId, false);
       });
 
-      // If viewing active notes and just archived the active note, advance to next active note
       if (selectedFolderFilter !== 'archived' && targetNoteId === activeNoteId) {
         const remainingActive = notes.filter((n) => !n.isArchived && n.id !== targetNoteId);
         if (remainingActive.length > 0) {
@@ -547,7 +697,6 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         handleSetNoteArchive(targetNoteId, true);
       });
 
-      // If viewing archived notes and just restored the active note, advance to next archived note
       if (selectedFolderFilter === 'archived' && targetNoteId === activeNoteId) {
         const remainingArchived = notes.filter((n) => n.isArchived && n.id !== targetNoteId);
         if (remainingArchived.length > 0) {
@@ -562,14 +711,37 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     setFolderId(targetFolderId);
     if (!targetFolderId) {
       setFolderName('');
-      setCategory('সাধারণ নোট');
     } else {
       const matched = folders.find((f) => f.id === targetFolderId);
       if (matched) {
         setFolderName(matched.name);
-        setCategory(matched.name);
       }
     }
+  };
+
+  // Multi-Select Category Handlers
+  const handleToggleCategory = (catName: string) => {
+    const trimmed = catName.trim();
+    if (!trimmed) return;
+    if (categories.includes(trimmed)) {
+      setCategories(categories.filter((c) => c !== trimmed));
+    } else {
+      setCategories([...categories, trimmed]);
+    }
+  };
+
+  const handleAddCustomCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = newCustomCategoryInput.trim();
+    if (!clean) return;
+    if (!categories.includes(clean)) {
+      setCategories([...categories, clean]);
+    }
+    setNewCustomCategoryInput('');
+  };
+
+  const handleRemoveCategory = (catName: string) => {
+    setCategories(categories.filter((c) => c !== catName));
   };
 
   // Tag Operations
@@ -751,6 +923,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         setTitle('');
         setContent('');
         setTags([]);
+        setCategories([]);
         setFolderId('');
         setFolderName('');
       }
@@ -766,6 +939,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         title: `${title} (কপি)`,
         content,
         category,
+        categories,
         folderId,
         folderName,
         tags,
@@ -800,6 +974,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     const metaHeader = [
       `# ${title || 'শিরোনামহীন নোট'}`,
       isArchived ? '> অবস্থা: আর্কাইভকৃত (Archived)' : '',
+      categories.length > 0 ? `> ক্যাটাগরি: ${categories.join(', ')}` : '',
       folderName ? `> ফোল্ডার: ${folderName}` : '',
       tags.length > 0 ? `> ট্যাগ: ${tags.map((t) => `#${t}`).join(', ')}` : '',
       `> তারিখ: ${new Date().toLocaleDateString('bn-BD')}`,
@@ -817,6 +992,25 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     link.click();
     URL.revokeObjectURL(url);
   };
+
+  // Calculate unique categories across all notes
+  const allCategoriesMap: { [key: string]: number } = {};
+  PRESET_CATEGORIES.forEach((cat) => {
+    allCategoriesMap[cat] = 0;
+  });
+
+  notes.forEach((n) => {
+    const noteCats = n.categories && Array.isArray(n.categories) && n.categories.length > 0
+      ? n.categories
+      : (n.category ? [n.category] : []);
+    noteCats.forEach((c) => {
+      if (c) allCategoriesMap[c] = (allCategoriesMap[c] || 0) + 1;
+    });
+  });
+
+  const allAvailableCategories = Object.keys(allCategoriesMap).sort((a, b) =>
+    (allCategoriesMap[b] || 0) - (allCategoriesMap[a] || 0)
+  );
 
   // Calculate unique tags and counts across all notes
   const allTagsMap: { [key: string]: number } = {};
@@ -839,12 +1033,10 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
   const archivedCount = notes.filter((n) => n.isArchived).length;
   const activeNotesCount = notes.filter((n) => !n.isArchived).length;
 
-  // Real-time filtering by folder, tag, search query (title + content), and searchScope
+  // Real-time filtering by folder, multiple categories, multiple tags, search query, and searchScope
   const filteredNotes = useMemo(() => {
     return notes.filter((n) => {
-      // Archive Separation:
-      // If user selected 'archived', show only archived notes!
-      // If user is in ANY other view ('all', 'pinned', 'uncategorized', or specific folder), NEVER show archived notes!
+      // Archive Separation
       if (selectedFolderFilter === 'archived') {
         if (!n.isArchived) return false;
       } else {
@@ -860,9 +1052,20 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         if (n.folderId !== selectedFolderFilter) return false;
       }
 
-      // Tag filter
-      if (selectedTagFilter) {
-        if (!n.tags || !n.tags.includes(selectedTagFilter)) return false;
+      // Multi-Select Category Filter (must match at least one of the selected categories)
+      if (selectedCategoryFilters.length > 0) {
+        const noteCats = n.categories && n.categories.length > 0
+          ? n.categories
+          : (n.category ? [n.category] : []);
+        const hasMatchingCategory = selectedCategoryFilters.some((fCat) => noteCats.includes(fCat));
+        if (!hasMatchingCategory) return false;
+      }
+
+      // Multi-Select Tag Filter (must match at least one of the selected tags)
+      if (selectedTagFilters.length > 0) {
+        if (!n.tags || n.tags.length === 0) return false;
+        const hasMatchingTag = selectedTagFilters.some((fTag) => n.tags?.includes(fTag));
+        if (!hasMatchingTag) return false;
       }
 
       // Real-time Search Query Filtering
@@ -872,6 +1075,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         const matchContent = (n.content || '').toLowerCase().includes(q);
         const matchFolder = (n.folderName || '').toLowerCase().includes(q);
         const matchTags = n.tags?.some((t) => t.toLowerCase().includes(q));
+        const matchCats = n.categories?.some((c) => c.toLowerCase().includes(q)) || n.category?.toLowerCase().includes(q);
 
         if (searchScope === 'title') {
           return matchTitle;
@@ -879,12 +1083,12 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         if (searchScope === 'content') {
           return matchContent;
         }
-        return matchTitle || matchContent || matchFolder || matchTags;
+        return matchTitle || matchContent || matchFolder || matchTags || matchCats;
       }
 
       return true;
     });
-  }, [notes, selectedFolderFilter, selectedTagFilter, searchQuery, searchScope]);
+  }, [notes, selectedFolderFilter, selectedCategoryFilters, selectedTagFilters, searchQuery, searchScope]);
 
   // Auto-switch to first matching note if current active note is not in filtered results during active filter/search
   useEffect(() => {
@@ -894,7 +1098,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         loadNoteIntoEditor(filteredNotes[0]);
       }
     }
-  }, [selectedFolderFilter, selectedTagFilter, searchQuery, searchScope, filteredNotes, activeNoteId]);
+  }, [selectedFolderFilter, selectedCategoryFilters, selectedTagFilters, searchQuery, searchScope, filteredNotes, activeNoteId]);
 
   // Count search term matches in active note
   const activeNoteMatchCount = useMemo(() => {
@@ -957,13 +1161,13 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 mb-2">
             <Sparkles className="w-3.5 h-3.5" />
-            স্মার্ট নোট, আর্কাইভ ও ট্যাগ অর্গানাইজার (Smart Notes)
+            ভয়েস-টু-টেক্সট, মাল্টি-ট্যাগ ও স্মার্ট ক্যাটাগরি (Smart Notes)
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">
             Bashar Smart Notes
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            আর্কাইভ সিস্টেম, রিয়েল-টাইম সার্চ, ফোল্ডার ও ক্লাউড অটো-সেভ সম্বলিত সম্পূর্ণ নোটপ্যাড।
+            স্পিচ রেকগনিশন দিয়ে মুখে বলে নোট তৈরি, মাল্টিপল ক্যাটাগরি ও ট্যাগ ফিল্টারিং এবং ক্লাউড ব্যাকআপ।
           </p>
         </div>
 
@@ -975,7 +1179,8 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                 setSelectedFolderFilter('all');
               } else {
                 setSelectedFolderFilter('archived');
-                setSelectedTagFilter(null);
+                setSelectedTagFilters([]);
+                setSelectedCategoryFilters([]);
               }
             }}
             className={`px-3 py-2 text-xs font-semibold rounded-xl border transition cursor-pointer flex items-center gap-1.5 ${
@@ -1001,10 +1206,10 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
           <button
             onClick={() => setShowFolderSidebar(!showFolderSidebar)}
             className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer"
-            title="ফোল্ডার নেভিগেশন প্রদর্শন বা আড়াল করুন"
+            title="ফোল্ডার ও ক্যাটাগরি প্যানেল প্রদর্শন বা আড়াল করুন"
           >
             <Folder className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-            {showFolderSidebar ? 'ফোল্ডার লুকান' : 'ফোল্ডার প্রদর্শন'}
+            {showFolderSidebar ? 'প্যানেল লুকান' : 'প্যানেল প্রদর্শন'}
           </button>
 
           <button
@@ -1021,7 +1226,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-amber-800 dark:text-amber-200 text-xs sm:text-sm">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-5 h-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-            <span>নোট এবং আর্কাইভগুলো ক্লাউডে স্থায়ীভাবে সেভ রাখতে অনুগ্রহ করে লগইন করুন।</span>
+            <span>নোট, ট্যাগ ও ক্যাটাগরিগুলো ক্লাউডে স্থায়ীভাবে সেভ রাখতে অনুগ্রহ করে লগইন করুন।</span>
           </div>
           <button
             onClick={onOpenAuth}
@@ -1034,7 +1239,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
 
       {/* Main 3-Column / Responsive Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column 1: Folder, Views & Tag Navigator */}
+        {/* Left Column 1: Folder, Views, Categories & Tag Navigator */}
         {showFolderSidebar && (
           <div className="lg:col-span-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs p-4 space-y-6">
             {/* Quick Views */}
@@ -1046,10 +1251,11 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                 <button
                   onClick={() => {
                     setSelectedFolderFilter('all');
-                    setSelectedTagFilter(null);
+                    setSelectedTagFilters([]);
+                    setSelectedCategoryFilters([]);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
-                    selectedFolderFilter === 'all' && !selectedTagFilter
+                    selectedFolderFilter === 'all' && selectedTagFilters.length === 0 && selectedCategoryFilters.length === 0
                       ? 'bg-indigo-600 text-white shadow-xs font-semibold'
                       : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
                   }`}
@@ -1060,7 +1266,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   </div>
                   <span
                     className={`text-[11px] px-2 py-0.5 rounded-full ${
-                      selectedFolderFilter === 'all' && !selectedTagFilter
+                      selectedFolderFilter === 'all' && selectedTagFilters.length === 0 && selectedCategoryFilters.length === 0
                         ? 'bg-indigo-700 text-indigo-100'
                         : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
                     }`}
@@ -1072,7 +1278,8 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                 <button
                   onClick={() => {
                     setSelectedFolderFilter('pinned');
-                    setSelectedTagFilter(null);
+                    setSelectedTagFilters([]);
+                    setSelectedCategoryFilters([]);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
                     selectedFolderFilter === 'pinned'
@@ -1099,7 +1306,8 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                 <button
                   onClick={() => {
                     setSelectedFolderFilter('archived');
-                    setSelectedTagFilter(null);
+                    setSelectedTagFilters([]);
+                    setSelectedCategoryFilters([]);
                   }}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
                     selectedFolderFilter === 'archived'
@@ -1121,32 +1329,61 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                     {archivedCount}
                   </span>
                 </button>
+              </div>
+            </div>
 
-                <button
-                  onClick={() => {
-                    setSelectedFolderFilter('uncategorized');
-                    setSelectedTagFilter(null);
-                  }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition cursor-pointer ${
-                    selectedFolderFilter === 'uncategorized'
-                      ? 'bg-indigo-600 text-white shadow-xs font-semibold'
-                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-slate-400" />
-                    <span>সাধারণ / ফোল্ডারবিহীন</span>
-                  </div>
-                  <span
-                    className={`text-[11px] px-2 py-0.5 rounded-full ${
-                      selectedFolderFilter === 'uncategorized'
-                        ? 'bg-indigo-700 text-indigo-100'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
-                    }`}
+            {/* Multi-Select Category Filters Section */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <Tags className="w-3.5 h-3.5 text-indigo-500" />
+                  ক্যাটাগরি ও লেবেল ফিল্টার
+                </span>
+                {selectedCategoryFilters.length > 0 && (
+                  <button
+                    onClick={() => setSelectedCategoryFilters([])}
+                    className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
                   >
-                    {uncategorizedCount}
-                  </span>
-                </button>
+                    মুছুন
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                {allAvailableCategories.map((cat) => {
+                  const isChecked = selectedCategoryFilters.includes(cat);
+                  const count = allCategoriesMap[cat] || 0;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => {
+                        if (isChecked) {
+                          setSelectedCategoryFilters(selectedCategoryFilters.filter((c) => c !== cat));
+                        } else {
+                          setSelectedCategoryFilters([...selectedCategoryFilters, cat]);
+                        }
+                      }}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition cursor-pointer ${
+                        isChecked
+                          ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-semibold border border-indigo-200 dark:border-indigo-800'
+                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        {isChecked ? (
+                          <CheckSquare className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+                        ) : (
+                          <Square className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                        )}
+                        <span className="truncate">{cat}</span>
+                      </div>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/60 dark:bg-slate-700 text-slate-600 dark:text-slate-400 flex-shrink-0">
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -1215,7 +1452,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
               )}
 
               {/* Folders List */}
-              <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+              <div className="space-y-1 max-h-44 overflow-y-auto pr-1">
                 {folders.map((folder) => {
                   const isSelected = selectedFolderFilter === folder.id;
                   const colorObj = FOLDER_COLORS.find((c) => c.id === folder.color) || FOLDER_COLORS[0];
@@ -1262,7 +1499,6 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                       <div
                         onClick={() => {
                           setSelectedFolderFilter(folder.id);
-                          setSelectedTagFilter(null);
                         }}
                         className="flex items-center gap-2 min-w-0 flex-1 py-0.5"
                       >
@@ -1315,19 +1551,19 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
               </div>
             </div>
 
-            {/* Tags Cloud / Filter Section */}
+            {/* Tags Cloud & Multi-Select Filter Section */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
                   <Tag className="w-3.5 h-3.5" />
-                  ট্যাগসমূহ (Tags)
+                  ট্যাগসমূহ (Tags Multi-Filter)
                 </span>
-                {selectedTagFilter && (
+                {selectedTagFilters.length > 0 && (
                   <button
-                    onClick={() => setSelectedTagFilter(null)}
+                    onClick={() => setSelectedTagFilters([])}
                     className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
                   >
-                    ফিল্টার মুছুন
+                    মুছুন
                   </button>
                 )}
               </div>
@@ -1339,11 +1575,17 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
               ) : (
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {allUniqueTags.map((tg) => {
-                    const isSelected = selectedTagFilter === tg;
+                    const isSelected = selectedTagFilters.includes(tg);
                     return (
                       <button
                         key={tg}
-                        onClick={() => setSelectedTagFilter(isSelected ? null : tg)}
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedTagFilters(selectedTagFilters.filter((t) => t !== tg));
+                          } else {
+                            setSelectedTagFilters([...selectedTagFilters, tg]);
+                          }
+                        }}
                         className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs transition cursor-pointer border ${
                           isSelected
                             ? 'bg-indigo-600 border-indigo-600 text-white font-semibold shadow-xs'
@@ -1408,7 +1650,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                 placeholder={
                   selectedFolderFilter === 'archived'
                     ? 'আর্কাইভকৃত নোটে খুঁজুন...'
-                    : "শিরোনাম বা টেক্সটে রিয়েল-টাইম সার্চ... ('/' চাপুন)"
+                    : "শিরোনাম, লেখা বা ট্যাগে রিয়েল-টাইম সার্চ... ('/' চাপুন)"
                 }
                 className="w-full pl-10 pr-9 py-2 text-xs border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 dark:bg-slate-800/50 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none transition shadow-2xs"
               />
@@ -1488,7 +1730,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
           </div>
 
           {/* Active Filter Indicators Banner */}
-          {(selectedFolderFilter !== 'all' || selectedTagFilter || searchQuery) && (
+          {(selectedFolderFilter !== 'all' || selectedCategoryFilters.length > 0 || selectedTagFilters.length > 0 || searchQuery) && (
             <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-1.5 text-xs">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[11px] text-slate-400 dark:text-slate-500 font-semibold flex items-center gap-1">
@@ -1517,15 +1759,41 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                       : folders.find((f) => f.id === selectedFolderFilter)?.name || 'ফোল্ডার'}
                   </span>
                 )}
-                {selectedTagFilter && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 text-[11px] font-medium">
-                    <Hash className="w-3 h-3" />
-                    {selectedTagFilter}
-                    <button onClick={() => setSelectedTagFilter(null)} className="hover:text-rose-500 cursor-pointer ml-0.5">
+
+                {/* Category Filter Chips */}
+                {selectedCategoryFilters.map((cat) => (
+                  <span
+                    key={cat}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[11px] font-medium"
+                  >
+                    <Tags className="w-3 h-3" />
+                    {cat}
+                    <button
+                      onClick={() => setSelectedCategoryFilters(selectedCategoryFilters.filter((c) => c !== cat))}
+                      className="hover:text-rose-500 cursor-pointer ml-0.5"
+                    >
                       <X className="w-2.5 h-2.5" />
                     </button>
                   </span>
-                )}
+                ))}
+
+                {/* Tag Filter Chips */}
+                {selectedTagFilters.map((t) => (
+                  <span
+                    key={t}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 text-[11px] font-medium"
+                  >
+                    <Hash className="w-3 h-3" />
+                    {t}
+                    <button
+                      onClick={() => setSelectedTagFilters(selectedTagFilters.filter((item) => item !== t))}
+                      className="hover:text-rose-500 cursor-pointer ml-0.5"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </span>
+                ))}
+
                 {searchQuery.trim() && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800 text-[11px] font-medium">
                     <Search className="w-3 h-3 text-amber-600" />
@@ -1540,13 +1808,14 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
               <button
                 onClick={() => {
                   setSelectedFolderFilter('all');
-                  setSelectedTagFilter(null);
+                  setSelectedCategoryFilters([]);
+                  setSelectedTagFilters([]);
                   setSearchQuery('');
                   setSearchScope('all');
                 }}
                 className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-semibold cursor-pointer"
               >
-                রিসেট
+                সব রিসেট
               </button>
             </div>
           )}
@@ -1582,9 +1851,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                           : 'কোনো নোট পাওয়া যায়নি'}
                       </p>
                       <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-                        {searchQuery.trim()
-                          ? 'সার্চ টার্ম পরিবর্তন করে দেখতে পারেন অথবা এই নামে সরাসরি নতুন নোট তৈরি করুন।'
-                          : 'উপরে "+ নতুন নোট তৈরি" বাটনে ক্লিক করে নোট শুরু করুন।'}
+                        ফিল্টার পরিবর্তন করে দেখতে পারেন অথবা নতুন নোট তৈরি করতে পারেন।
                       </p>
                     </div>
                   </>
@@ -1615,6 +1882,9 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                 const matchedFolder = folders.find((f) => f.id === note.folderId);
                 const folderColorObj = matchedFolder ? FOLDER_COLORS.find((c) => c.id === matchedFolder.color) : null;
                 const contentSnippet = getSnippetWithMatch(note.content, searchQuery, 90);
+                const noteCategories = note.categories && note.categories.length > 0
+                  ? note.categories
+                  : (note.category ? [note.category] : []);
 
                 return (
                   <div
@@ -1676,25 +1946,34 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                         : note.content || 'খালি নোট...'}
                     </p>
 
-                    {/* Tags preview on Note card */}
-                    {note.tags && note.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {note.tags.slice(0, 3).map((tg) => (
-                          <span
-                            key={tg}
-                            className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700/60 font-medium"
-                          >
-                            <Hash className="w-2.5 h-2.5 opacity-60" />
-                            {searchQuery.trim() ? highlightMatch(tg, searchQuery) : tg}
-                          </span>
-                        ))}
-                        {note.tags.length > 3 && (
-                          <span className="text-[10px] text-slate-400 dark:text-slate-500 self-center">
-                            +{note.tags.length - 3}
-                          </span>
-                        )}
-                      </div>
-                    )}
+                    {/* Multi-Categories and Tags preview on Note card */}
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {noteCategories.map((c) => (
+                        <span
+                          key={c}
+                          className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/50 font-medium"
+                        >
+                          <Tags className="w-2.5 h-2.5 text-indigo-500" />
+                          {searchQuery.trim() ? highlightMatch(c, searchQuery) : c}
+                        </span>
+                      ))}
+
+                      {note.tags && note.tags.slice(0, 2).map((tg) => (
+                        <span
+                          key={tg}
+                          className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700/60 font-medium"
+                        >
+                          <Hash className="w-2.5 h-2.5 opacity-60" />
+                          {searchQuery.trim() ? highlightMatch(tg, searchQuery) : tg}
+                        </span>
+                      ))}
+
+                      {note.tags && note.tags.length > 2 && (
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500 self-center">
+                          +{note.tags.length - 2}
+                        </span>
+                      )}
+                    </div>
 
                     <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-400 dark:text-slate-500">
                       <div className="flex items-center gap-1 truncate max-w-[150px]">
@@ -1778,14 +2057,46 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                 </div>
               )}
 
-              {/* Editor Top Bar */}
+              {/* Voice Input (SpeechRecognition) Live Status Banner */}
+              {isListening && (
+                <div className="p-3 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800/80 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-900 dark:text-rose-200 shadow-sm animate-pulse">
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+                    </span>
+                    <div>
+                      <p className="font-bold flex items-center gap-1.5">
+                        <Mic className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                        ভয়েস ইনপুট চালু আছে — কথা বলুন...
+                      </p>
+                      <p className="text-[11px] text-rose-700 dark:text-rose-300">
+                        {speechInterim
+                          ? `শোনা যাচ্ছে: "${speechInterim}"`
+                          : `ভাষা: ${speechLang === 'bn-BD' ? 'বাংলা (Bengali)' : 'ইংরেজি (English)'} • গন্তব্য: ${speechTarget === 'content' ? 'নোটের বিষয়বস্তু' : 'শিরোনাম'}`}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={toggleSpeechRecognition}
+                      className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg transition cursor-pointer flex items-center gap-1"
+                    >
+                      <MicOff className="w-3.5 h-3.5" />
+                      রেকর্ডিং বন্ধ করুন
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Editor Top Bar with Voice-to-Text Button and Controls */}
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
                 {/* Auto-save Status Indicator */}
                 <div className="flex items-center gap-2 text-xs">
                   {saveStatus === 'saving' && (
                     <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium">
                       <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                      সংরক্ষণ করা হচ্ছে...
+                      সংরক্ষণ হচ্ছে...
                     </span>
                   )}
                   {saveStatus === 'saved' && (
@@ -1800,6 +2111,55 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                       সংরক্ষণ ব্যর্থ
                     </span>
                   )}
+                </div>
+
+                {/* Speech Recognition (Voice-to-Text) Button and Options */}
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={toggleSpeechRecognition}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer shadow-2xs ${
+                      isListening
+                        ? 'bg-rose-600 text-white ring-2 ring-rose-400/50 shadow-md animate-pulse'
+                        : 'bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80'
+                    }`}
+                    title="স্পিচ রিকগনিশন (Voice Input) চালু করুন"
+                  >
+                    {isListening ? (
+                      <>
+                        <Radio className="w-3.5 h-3.5 animate-spin" />
+                        <span>রেকর্ডিং হচ্ছে</span>
+                      </>
+                    ) : (
+                      <>
+                        <Mic className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                        <span>ভয়েস টাইপিং</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* Speech Language & Target Selector Toggle */}
+                  <select
+                    value={speechLang}
+                    onChange={(e) => setSpeechLang(e.target.value as 'bn-BD' | 'en-US')}
+                    disabled={isListening}
+                    className="text-[11px] border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
+                    title="ভয়েস ভাষা নির্বাচন করুন"
+                  >
+                    <option value="bn-BD">🇧🇩 বাংলা</option>
+                    <option value="en-US">🇺🇸 English</option>
+                  </select>
+
+                  <select
+                    value={speechTarget}
+                    onChange={(e) => setSpeechTarget(e.target.value as 'content' | 'title')}
+                    disabled={isListening}
+                    className="text-[11px] border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer hidden sm:block"
+                    title="ভয়েস লেখার স্থান"
+                  >
+                    <option value="content">বডিতে লিখুন</option>
+                    <option value="title">শিরোনামে লিখুন</option>
+                  </select>
                 </div>
 
                 {/* Color Selector */}
@@ -1884,51 +2244,136 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                 />
               </div>
 
-              {/* Organization Metadata Bar: Folder Selector & Tag Management */}
-              <div className="bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3">
-                {/* Folder Selector */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold flex items-center gap-1">
-                    <Folder className="w-3.5 h-3.5 text-indigo-500" />
-                    ফোল্ডার:
-                  </span>
-                  <select
-                    value={folderId}
-                    onChange={(e) => handleAssignFolder(e.target.value)}
-                    className="text-xs border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
-                  >
-                    <option value="">সাধারণ / কোনো ফোল্ডার নেই</option>
-                    {folders.map((f) => (
-                      <option key={f.id} value={f.id}>
-                        📁 {f.name}
-                      </option>
-                    ))}
-                  </select>
+              {/* Organization Metadata Bar: Folder Selector, Multi-Select Categories & Tag Management */}
+              <div className="bg-slate-50 dark:bg-slate-800/40 p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 space-y-3.5">
+                {/* Row 1: Folder Selector & Categories Multi-Select Dropdown */}
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Folder Selector */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold flex items-center gap-1">
+                      <Folder className="w-3.5 h-3.5 text-indigo-500" />
+                      ফোল্ডার:
+                    </span>
+                    <select
+                      value={folderId}
+                      onChange={(e) => handleAssignFolder(e.target.value)}
+                      className="text-xs border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                    >
+                      <option value="">সাধারণ / ফোল্ডারবিহীন</option>
+                      {folders.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          📁 {f.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-                  <button
-                    onClick={() => setIsCreatingFolder(true)}
-                    className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5 cursor-pointer ml-1"
-                  >
-                    <Plus className="w-3 h-3" />
-                    নতুন ফোল্ডার
-                  </button>
+                  {/* Multi-Select Categories / Labels Dropdown */}
+                  <div className="relative" ref={categoryDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setIsCategoryDropdownOpen(!isCategoryDropdownOpen)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-indigo-500 text-slate-700 dark:text-slate-200 text-xs font-medium rounded-lg cursor-pointer transition shadow-2xs"
+                    >
+                      <Tags className="w-3.5 h-3.5 text-indigo-500" />
+                      <span>ক্যাটাগরি নির্বাচন ({categories.length})</span>
+                      <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${isCategoryDropdownOpen ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {/* Dropdown Popover */}
+                    {isCategoryDropdownOpen && (
+                      <div className="absolute left-0 top-full mt-1.5 z-40 w-64 p-3 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 space-y-2.5 animate-in fade-in zoom-in-95 duration-150">
+                        <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                          একাধিক ক্যাটাগরি বেছে নিন:
+                        </div>
+
+                        {/* List with checkboxes */}
+                        <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                          {allAvailableCategories.map((cat) => {
+                            const isChecked = categories.includes(cat);
+                            return (
+                              <button
+                                key={cat}
+                                type="button"
+                                onClick={() => handleToggleCategory(cat)}
+                                className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition cursor-pointer text-left ${
+                                  isChecked
+                                    ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-semibold'
+                                    : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                                }`}
+                              >
+                                <span className="truncate">{cat}</span>
+                                {isChecked ? (
+                                  <CheckSquare className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+                                ) : (
+                                  <Square className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Add custom category inline form */}
+                        <form onSubmit={handleAddCustomCategory} className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={newCustomCategoryInput}
+                            onChange={(e) => setNewCustomCategoryInput(e.target.value)}
+                            placeholder="নতুন ক্যাটাগরি তৈরি করুন..."
+                            className="w-full px-2 py-1 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md text-slate-800 dark:text-slate-100 focus:outline-none"
+                          />
+                          <button
+                            type="submit"
+                            disabled={!newCustomCategoryInput.trim()}
+                            className="px-2 py-1 bg-indigo-600 text-white text-xs font-semibold rounded-md hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
+                          >
+                            যোগ
+                          </button>
+                        </form>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                {/* Tags Management */}
+                {/* Display Active Selected Categories as Badges */}
+                {categories.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400 font-medium">নিযুক্ত ক্যাটাগরি:</span>
+                    {categories.map((c) => (
+                      <span
+                        key={c}
+                        className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-medium"
+                      >
+                        <Tags className="w-3 h-3 text-indigo-500" />
+                        {c}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveCategory(c)}
+                          className="hover:text-rose-500 transition cursor-pointer ml-0.5"
+                          title="ক্যাটাগরি মুছুন"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Row 2: Tags Management Input & Chips */}
                 <div>
                   <div className="flex flex-wrap items-center gap-1.5 mb-2">
                     <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold flex items-center gap-1">
                       <Tag className="w-3.5 h-3.5 text-purple-500" />
-                      ট্যাগসমূহ:
+                      ট্যাগসমূহ (Tags):
                     </span>
 
                     {/* Active tags badges */}
                     {tags.map((t) => (
                       <span
                         key={t}
-                        className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-medium"
+                        className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 font-medium"
                       >
-                        <Hash className="w-3 h-3 text-indigo-500" />
+                        <Hash className="w-3 h-3 text-purple-500" />
                         {t}
                         <button
                           onClick={() => handleRemoveTag(t)}
@@ -1997,7 +2442,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   rows={14}
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
-                  placeholder="এখানে আপনার নোট, চেকলিস্ট বা মিটিংয়ের বিস্তারিত লিখুন..."
+                  placeholder="এখানে আপনার নোট, চেকলিস্ট বা মিটিংয়ের বিস্তারিত লিখুন অথবা উপরের 'ভয়েস টাইপিং' বাটন ব্যবহার করে মুখে বলুন..."
                   className="w-full text-sm sm:text-base text-slate-800 dark:text-slate-100 leading-relaxed border-none focus:outline-none placeholder-slate-300 dark:placeholder-slate-600 resize-none font-sans bg-transparent min-h-[300px]"
                 />
               </div>
@@ -2010,7 +2455,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                 </div>
                 <div className="flex items-center gap-1 text-[11px]">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                  Markdown ও অটো-ব্যাকআপ সক্রিয়
+                  ভয়েস ইনপুট, ট্যাগ ও অটো-ব্যাকআপ সক্রিয়
                 </div>
               </div>
             </>
