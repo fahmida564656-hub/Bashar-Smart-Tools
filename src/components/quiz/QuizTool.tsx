@@ -5,6 +5,7 @@ import { collection, query, orderBy, getDocs, addDoc, deleteDoc, doc } from 'fir
 import { QUIZ_CATEGORIES, DEFAULT_QUESTIONS } from '../../data/quizQuestions';
 import { QuizQuestion, QuizAttempt } from '../../types';
 import confetti from 'canvas-confetti';
+import { QuizDashboardAnalytics } from './QuizDashboardAnalytics';
 import {
   HelpCircle,
   Clock,
@@ -19,7 +20,10 @@ import {
   Trash2,
   Sparkles,
   BookOpen,
-  AlertCircle
+  AlertCircle,
+  BarChart2,
+  Search,
+  Filter
 } from 'lucide-react';
 
 export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) => {
@@ -27,8 +31,11 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
 
   // Setup state
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [categorySearch, setCategorySearch] = useState<string>('');
+  const [categoryGroup, setCategoryGroup] = useState<string>('all');
   const [questionCount, setQuestionCount] = useState<number>(10);
-  const [quizState, setQuizState] = useState<'setup' | 'active' | 'result' | 'history'>('setup');
+  const [instantFeedbackMode, setInstantFeedbackMode] = useState<boolean>(true);
+  const [quizState, setQuizState] = useState<'setup' | 'active' | 'result' | 'history' | 'dashboard'>('setup');
 
   // Active quiz session state
   const [activeQuestions, setActiveQuestions] = useState<QuizQuestion[]>([]);
@@ -46,10 +53,24 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
   const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
-  // Fetch past quiz attempts from Firestore
+  // Fetch past quiz attempts from Firestore or local storage
   const loadHistory = async () => {
-    if (!user) return;
     setLoadingHistory(true);
+
+    if (!user) {
+      const saved = localStorage.getItem('bashar_quiz_local');
+      if (saved) {
+        try {
+          const items: QuizAttempt[] = JSON.parse(saved);
+          items.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+          setHistoryList(items);
+        } catch (e) {}
+      } else {
+        setHistoryList([]);
+      }
+      setLoadingHistory(false);
+      return;
+    }
 
     if (!auth.currentUser) {
       const userKey = `bashar_quiz_${user.uid}`;
@@ -91,10 +112,15 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
   };
 
   useEffect(() => {
-    if (quizState === 'history' && user) {
+    if (quizState === 'history' || quizState === 'dashboard') {
       loadHistory();
     }
   }, [quizState, user]);
+
+  // Initial load
+  useEffect(() => {
+    loadHistory();
+  }, [user]);
 
   // Start quiz
   const handleStartQuiz = () => {
@@ -211,6 +237,7 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
             createdAt: attempt.createdAt,
           });
           attempt.id = docRef.id;
+          setHistoryList((prev) => [attempt, ...prev]);
           setSaveStatus('ফলাফল আপনার অ্যাকাউন্টে সফলভাবে সংরক্ষিত হয়েছে ✓');
         } catch (err) {
           console.error('Failed to save quiz attempt:', err);
@@ -223,13 +250,24 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
           const existingList: QuizAttempt[] = existingRaw ? JSON.parse(existingRaw) : [];
           existingList.unshift(attempt);
           localStorage.setItem(userKey, JSON.stringify(existingList));
+          setHistoryList(existingList);
           setSaveStatus('ফলাফল আপনার অ্যাকাউন্টে সফলভাবে সংরক্ষিত হয়েছে ✓');
         } catch (err) {
           setSaveStatus('ফলাফল স্থানীয়ভাবে সংরক্ষিত হয়েছে ✓');
         }
       }
     } else {
-      setSaveStatus('অতিথি হিসেবে সম্পন্ন করেছেন। ইতিহাসে সংরক্ষণের জন্য লগইন করুন।');
+      const localKey = 'bashar_quiz_local';
+      try {
+        const existingRaw = localStorage.getItem(localKey);
+        const existingList: QuizAttempt[] = existingRaw ? JSON.parse(existingRaw) : [];
+        existingList.unshift(attempt);
+        localStorage.setItem(localKey, JSON.stringify(existingList));
+        setHistoryList(existingList);
+        setSaveStatus('ফলাফল স্থানীয়ভাবে সংরক্ষিত হয়েছে ✓ (ক্লাউডে সংরক্ষণের জন্য লগইন করুন)');
+      } catch (e) {
+        setSaveStatus('ফলাফল সংরক্ষিত হয়েছে।');
+      }
     }
   };
 
@@ -267,37 +305,54 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 mb-2">
             <Sparkles className="w-3.5 h-3.5" />
-            অনলাইন কুইজ ও পরীক্ষা প্ল্যাটফর্ম
+            অনলাইন কুইজ ও পরীক্ষা প্ল্যাটফর্ম • ১৫০০টি প্রশ্নসম্ভার ও ৩০টি ক্যাটাগরি
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">
             Bashar Quiz Master
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            সাধারণ জ্ঞান, বাংলা, ইংরেজি, গণিত, বিজ্ঞান ও ICT-র বাস্তব MCQ পরীক্ষা।
+            ৩০টি বিষয়ভিত্তিক ক্যাটাগরিতে মোট ১৫০০টি প্রশ্ন, রিয়েল-টাইম ভুল ও সঠিক উত্তর নির্ণয়।
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {quizState !== 'setup' && (
             <button
               onClick={() => setQuizState('setup')}
               className="flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition cursor-pointer"
             >
               <RotateCcw className="w-4 h-4" />
-              নতুন পরীক্ষা
+              কুইজ পরীক্ষা
             </button>
           )}
+
+          <button
+            onClick={() => setQuizState(quizState === 'dashboard' ? 'setup' : 'dashboard')}
+            className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-xl transition cursor-pointer ${
+              quizState === 'dashboard'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 dark:hover:bg-indigo-900/60'
+            }`}
+          >
+            <BarChart2 className="w-4 h-4" />
+            ড্যাশবোর্ড
+          </button>
 
           <button
             onClick={() => setQuizState(quizState === 'history' ? 'setup' : 'history')}
             className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-xl transition cursor-pointer ${
               quizState === 'history'
                 ? 'bg-indigo-600 text-white shadow-xs'
-                : 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 dark:hover:bg-indigo-900/60'
+                : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'
             }`}
           >
             <History className="w-4 h-4" />
-            পূর্বের ইতিহাস
+            ইতিহাস
+            {historyList.length > 0 && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${quizState === 'history' ? 'bg-indigo-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'}`}>
+                {historyList.length}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -306,13 +361,65 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
       {quizState === 'setup' && (
         <div className="space-y-8 animate-in fade-in">
           {/* Category selection */}
-          <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs transition-colors">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-              ১. পরীক্ষার ক্যাটাগরি নির্বাচন করুন
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {QUIZ_CATEGORIES.map((cat) => {
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs transition-colors space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                  <BookOpen className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                  ১. পরীক্ষার বিষয় / ক্যাটাগরি নির্বাচন করুন
+                </h2>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                  মোট ৩০টি ক্যাটাগরি এবং ১৫০০টি যাচাইকৃত বহু নির্বাচনি প্রশ্নসম্ভার
+                </p>
+              </div>
+
+              {/* Quick Search */}
+              <div className="relative min-w-[240px]">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={categorySearch}
+                  onChange={(e) => setCategorySearch(e.target.value)}
+                  placeholder="ক্যাটাগরি বা বিষয় খুঁজুন..."
+                  className="w-full pl-9 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+
+            {/* Category Group Tabs */}
+            <div className="flex flex-wrap gap-1.5 border-b border-slate-100 dark:border-slate-800/80 pb-3">
+              {[
+                { id: 'all', label: 'সকল বিষয় (৩১টি)' },
+                { id: 'general', label: 'সাধারণ জ্ঞান ও ইতিহাস' },
+                { id: 'science', label: 'বিজ্ঞান ও প্রযুক্তি' },
+                { id: 'math', label: 'গণিত ও যুক্তি' },
+                { id: 'language', label: 'ভাষা ও সাহিত্য' },
+                { id: 'social', label: 'সমাজ, ধর্ম ও সংস্কৃতি' },
+              ].map((grp) => (
+                <button
+                  key={grp.id}
+                  onClick={() => setCategoryGroup(grp.id)}
+                  className={`px-3 py-1 text-xs rounded-lg font-medium transition cursor-pointer ${
+                    categoryGroup === grp.id
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {grp.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Category Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[460px] overflow-y-auto pr-1">
+              {QUIZ_CATEGORIES.filter((cat) => {
+                const matchesGroup =
+                  categoryGroup === 'all' || cat.id === 'all' || cat.group === categoryGroup;
+                const matchesSearch =
+                  cat.nameBn.toLowerCase().includes(categorySearch.toLowerCase()) ||
+                  cat.nameEn.toLowerCase().includes(categorySearch.toLowerCase());
+                return matchesGroup && matchesSearch;
+              }).map((cat) => {
                 const isSelected = selectedCategory === cat.id;
                 const count =
                   cat.id === 'all'
@@ -323,19 +430,21 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
                   <button
                     key={cat.id}
                     onClick={() => setSelectedCategory(cat.id)}
-                    className={`text-left p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                    className={`text-left p-3.5 rounded-xl border-2 transition-all cursor-pointer ${
                       isSelected
-                        ? 'border-indigo-600 dark:border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/40 shadow-xs'
+                        ? 'border-indigo-600 dark:border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/40 shadow-xs ring-1 ring-indigo-500'
                         : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900/80 hover:bg-slate-50 dark:hover:bg-slate-800/50'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="font-semibold text-sm text-slate-800 dark:text-slate-200">{cat.nameBn}</span>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                        {count} টি প্রশ্ন
+                      <span className="font-semibold text-xs sm:text-sm text-slate-800 dark:text-slate-200 line-clamp-1">
+                        {cat.nameBn}
+                      </span>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono whitespace-nowrap ml-1">
+                        {count} টি
                       </span>
                     </div>
-                    <p className="text-xs text-slate-400 dark:text-slate-500">{cat.nameEn}</p>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 truncate">{cat.nameEn}</p>
                   </button>
                 );
               })}
@@ -348,20 +457,74 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
               <HelpCircle className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
               ২. প্রশ্নের সংখ্যা নির্বাচন করুন
             </h2>
-            <div className="flex flex-wrap gap-3">
-              {[5, 10, 15, 20].map((num) => (
+            <div className="flex flex-wrap gap-2.5">
+              {[5, 10, 20, 25, 50, 100, 150].map((num) => (
                 <button
                   key={num}
                   onClick={() => setQuestionCount(num)}
-                  className={`px-5 py-2.5 rounded-xl text-sm font-semibold border-2 transition cursor-pointer ${
+                  className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold border-2 transition cursor-pointer ${
                     questionCount === num
                       ? 'border-indigo-600 dark:border-indigo-500 bg-indigo-600 text-white shadow-xs'
                       : 'border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900'
                   }`}
                 >
-                  {num} টি প্রশ্ন ({num * 45 / 60} মিনিট)
+                  {num} টি প্রশ্ন ({Math.round((num * 45) / 60)} মিনিট)
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* Feedback Mode Selection */}
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs transition-colors">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+              ৩. কুইজ ও ফলাফল প্রদর্শন মোড (Feedback Mode)
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <button
+                type="button"
+                onClick={() => setInstantFeedbackMode(true)}
+                className={`text-left p-4 rounded-xl border-2 transition cursor-pointer flex items-start gap-3 ${
+                  instantFeedbackMode
+                    ? 'border-emerald-600 dark:border-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/40 shadow-xs'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900/80'
+                }`}
+              >
+                <div className={`p-2 rounded-lg mt-0.5 ${instantFeedbackMode ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-sm text-slate-800 dark:text-slate-100">তাৎক্ষণিক উত্তর প্রকাশ</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold">
+                      রিকমেন্ডেড
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    অপশনে ক্লিক করার সাথে সাথেই ভুল ধরা হবে এবং সঠিক উত্তর ও সুন্দর ব্যাখ্যা দেখানো হবে।
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setInstantFeedbackMode(false)}
+                className={`text-left p-4 rounded-xl border-2 transition cursor-pointer flex items-start gap-3 ${
+                  !instantFeedbackMode
+                    ? 'border-indigo-600 dark:border-indigo-500 bg-indigo-50/50 dark:bg-indigo-950/40 shadow-xs'
+                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900/80'
+                }`}
+              >
+                <div className={`p-2 rounded-lg mt-0.5 ${!instantFeedbackMode ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="font-bold text-sm text-slate-800 dark:text-slate-100">পরীক্ষা মোড (Exam Mode)</span>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    কুইজ চলাকালীন কোনো উত্তর প্রকাশ পাবে না, পরীক্ষা জমা দেওয়ার পর সব উত্তর দেখতে পাবেন।
+                  </p>
+                </div>
+              </button>
             </div>
           </div>
 
@@ -370,7 +533,9 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
             <div>
               <h3 className="text-lg font-bold">আপনি কি প্রস্তুত?</h3>
               <p className="text-xs text-indigo-200 dark:text-slate-300 mt-0.5">
-                প্রতিটি প্রশ্নের জন্য ৪৫ সেকেন্ড সময় থাকবে। ভুল উত্তরে কোনো নেগেটিভ মার্কিং নেই।
+                {selectedCategory === 'all'
+                  ? 'সকল ৫০০টি প্রশ্নের ব্যাংক থেকে র‍্যান্ডমভাবে প্রশ্ন নির্বাচন করা হবে।'
+                  : 'নির্বাচিত বিষয়ের প্রশ্নব্যাংক থেকে প্রশ্ন নির্বাচন করা হবে।'}
               </p>
             </div>
             <button
@@ -424,30 +589,117 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
             <div className="space-y-3">
               {activeQuestions[currentIndex].options.map((option, optIdx) => {
                 const isSelected = selectedAnswers[currentIndex] === optIdx;
+                const hasAnsweredCurrent = selectedAnswers[currentIndex] !== undefined;
+                const isCorrectOption = optIdx === activeQuestions[currentIndex].correctIndex;
+                const isUserWrong = isSelected && !isCorrectOption;
+
+                let borderBgClasses =
+                  'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-800 dark:text-slate-200';
+
+                if (instantFeedbackMode && hasAnsweredCurrent) {
+                  if (isCorrectOption) {
+                    borderBgClasses =
+                      'border-emerald-500 bg-emerald-50/90 dark:bg-emerald-950/70 ring-2 ring-emerald-400 text-emerald-950 dark:text-emerald-100 shadow-sm';
+                  } else if (isUserWrong) {
+                    borderBgClasses =
+                      'border-rose-500 bg-rose-50/90 dark:bg-rose-950/70 ring-2 ring-rose-400 text-rose-950 dark:text-rose-100 shadow-sm';
+                  } else {
+                    borderBgClasses =
+                      'border-slate-200 dark:border-slate-800 opacity-50 text-slate-400 dark:text-slate-500';
+                  }
+                } else if (isSelected) {
+                  borderBgClasses =
+                    'border-indigo-600 dark:border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/50 shadow-xs text-indigo-900 dark:text-indigo-200';
+                }
+
                 const optionLetters = ['ক', 'খ', 'গ', 'ঘ'];
 
                 return (
                   <button
                     key={optIdx}
                     onClick={() => handleSelectOption(optIdx)}
-                    className={`w-full text-left p-4 rounded-xl border-2 transition-all flex items-center gap-3.5 cursor-pointer ${
-                      isSelected
-                        ? 'border-indigo-600 dark:border-indigo-500 bg-indigo-50/60 dark:bg-indigo-950/50 shadow-xs text-indigo-900 dark:text-indigo-200'
-                        : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-800 dark:text-slate-200'
-                    }`}
+                    disabled={instantFeedbackMode && hasAnsweredCurrent}
+                    className={`w-full text-left p-4 rounded-xl border-2 transition-all flex items-center justify-between gap-3.5 ${
+                      instantFeedbackMode && hasAnsweredCurrent ? 'cursor-default' : 'cursor-pointer'
+                    } ${borderBgClasses}`}
                   >
-                    <span
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold transition ${
-                        isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
-                      }`}
-                    >
-                      {optionLetters[optIdx]}
-                    </span>
-                    <span className="text-sm font-medium leading-relaxed">{option}</span>
+                    <div className="flex items-center gap-3.5 min-w-0">
+                      <span
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold transition flex-shrink-0 ${
+                          instantFeedbackMode && hasAnsweredCurrent && isCorrectOption
+                            ? 'bg-emerald-600 text-white'
+                            : instantFeedbackMode && hasAnsweredCurrent && isUserWrong
+                            ? 'bg-rose-600 text-white'
+                            : isSelected
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {optionLetters[optIdx]}
+                      </span>
+                      <span className="text-sm font-medium leading-relaxed">{option}</span>
+                    </div>
+
+                    {/* Instant Feedback Badges */}
+                    {instantFeedbackMode && hasAnsweredCurrent && (
+                      <div className="flex-shrink-0">
+                        {isCorrectOption && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-md bg-emerald-100 dark:bg-emerald-900/80 text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700 animate-in zoom-in-95">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                            সঠিক উত্তর
+                          </span>
+                        )}
+                        {isUserWrong && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-md bg-rose-100 dark:bg-rose-900/80 text-rose-800 dark:text-rose-200 border border-rose-300 dark:border-rose-700 animate-in zoom-in-95">
+                            <XCircle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+                            ভুল উত্তর
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </button>
                 );
               })}
             </div>
+
+            {/* Instant Answer Explanation / Mistake Detection Banner */}
+            {instantFeedbackMode && selectedAnswers[currentIndex] !== undefined && (
+              <div
+                className={`mt-5 p-4 rounded-xl border text-xs leading-relaxed animate-in fade-in duration-200 flex items-start gap-3.5 ${
+                  selectedAnswers[currentIndex] === activeQuestions[currentIndex].correctIndex
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/80 text-emerald-900 dark:text-emerald-200'
+                    : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/80 text-rose-900 dark:text-rose-200'
+                }`}
+              >
+                {selectedAnswers[currentIndex] === activeQuestions[currentIndex].correctIndex ? (
+                  <div className="p-1.5 rounded-lg bg-emerald-500 text-white flex-shrink-0">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                ) : (
+                  <div className="p-1.5 rounded-lg bg-rose-500 text-white flex-shrink-0">
+                    <XCircle className="w-4 h-4" />
+                  </div>
+                )}
+                <div className="flex-1 space-y-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-bold text-sm">
+                      {selectedAnswers[currentIndex] === activeQuestions[currentIndex].correctIndex
+                        ? '🎉 দারুণ! আপনার উত্তরটি সঠিক হয়েছে।'
+                        : '❌ উত্তর ভুল হয়েছে! সাথে সাথে সঠিক উত্তরটি জেনে নিন:'}
+                    </p>
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-white/70 dark:bg-slate-800/80 border border-current">
+                      সঠিক উত্তর: {['ক', 'খ', 'গ', 'ঘ'][activeQuestions[currentIndex].correctIndex]}){' '}
+                      {activeQuestions[currentIndex].options[activeQuestions[currentIndex].correctIndex]}
+                    </span>
+                  </div>
+                  {activeQuestions[currentIndex].explanation && (
+                    <p className="text-slate-600 dark:text-slate-300 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60 leading-normal">
+                      <strong>ব্যাখ্যা:</strong> {activeQuestions[currentIndex].explanation}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Navigation buttons */}
             <div className="flex items-center justify-between mt-8 pt-6 border-t border-slate-100 dark:border-slate-800">
@@ -578,10 +830,17 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
                 পুনরায় পরীক্ষা দিন
               </button>
               <button
+                onClick={() => setQuizState('dashboard')}
+                className="px-6 py-2.5 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 text-sm font-semibold rounded-xl transition cursor-pointer flex items-center gap-2"
+              >
+                <BarChart2 className="w-4 h-4" />
+                পারফরম্যান্স ড্যাশবোর্ড
+              </button>
+              <button
                 onClick={() => setQuizState('setup')}
                 className="px-6 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-semibold rounded-xl transition cursor-pointer"
               >
-                অন্য ক্যাটাগরি বেছে নিন
+                অন্য ক্যাটাগরি
               </button>
               <button
                 onClick={() => setShowReview(!showReview)}
@@ -783,6 +1042,17 @@ export const QuizTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) =
             )}
           </div>
         </div>
+      )}
+
+      {/* STATE 5: DASHBOARD ANALYTICS SCREEN */}
+      {quizState === 'dashboard' && (
+        <QuizDashboardAnalytics
+          historyList={historyList}
+          onStartQuiz={() => setQuizState('setup')}
+          onOpenAuth={onOpenAuth}
+          user={user}
+          loading={loadingHistory}
+        />
       )}
     </div>
   );

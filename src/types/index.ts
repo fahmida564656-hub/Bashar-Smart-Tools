@@ -17,6 +17,7 @@ export interface QuizQuestion {
   correctIndex: number;
   explanation: string;
   difficulty?: 'easy' | 'medium' | 'hard';
+  num?: number | string;
 }
 
 export interface QuizAttempt {

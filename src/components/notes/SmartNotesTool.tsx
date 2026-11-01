@@ -19,6 +19,8 @@ import {
   Trash2,
   Copy,
   Download,
+  FileDown,
+  Share2,
   Archive,
   ArchiveRestore,
   Sparkles,
@@ -198,6 +200,11 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
   const autoSaveTimerRef = useRef<any>(null);
   const toastTimeoutRef = useRef<any>(null);
   const categoryDropdownRef = useRef<HTMLDivElement>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  // Markdown Export & Sharing State
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
+  const [isCopiedMarkdown, setIsCopiedMarkdown] = useState<boolean>(false);
 
   // Show Toast helper
   const showToast = (message: string, undoAction?: () => void) => {
@@ -212,7 +219,7 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     }, 4500);
   };
 
-  // Close category dropdown on outside click
+  // Close category dropdown & export menu on outside click
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
       if (
@@ -220,6 +227,12 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
         !categoryDropdownRef.current.contains(e.target as Node)
       ) {
         setIsCategoryDropdownOpen(false);
+      }
+      if (
+        exportMenuRef.current &&
+        !exportMenuRef.current.contains(e.target as Node)
+      ) {
+        setIsExportMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handleOutsideClick);
@@ -969,28 +982,190 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
     } catch (e) {}
   };
 
-  // Export note as markdown file
-  const handleExportNote = () => {
-    const metaHeader = [
-      `# ${title || 'শিরোনামহীন নোট'}`,
-      isArchived ? '> অবস্থা: আর্কাইভকৃত (Archived)' : '',
-      categories.length > 0 ? `> ক্যাটাগরি: ${categories.join(', ')}` : '',
-      folderName ? `> ফোল্ডার: ${folderName}` : '',
-      tags.length > 0 ? `> ট্যাগ: ${tags.map((t) => `#${t}`).join(', ')}` : '',
-      `> তারিখ: ${new Date().toLocaleDateString('bn-BD')}`,
-      '\n---\n\n',
+  // Generate structured Markdown with YAML frontmatter, header metadata, and body
+  const generateMarkdownForNote = (
+    noteTitle: string,
+    noteContent: string,
+    noteCategories: string[] = [],
+    noteFolderName?: string,
+    noteTags: string[] = [],
+    noteIsArchived?: boolean,
+    noteDate?: string
+  ) => {
+    const cleanTitle = noteTitle.trim() || 'শিরোনামহীন নোট';
+    const dateStr = noteDate
+      ? new Date(noteDate).toLocaleDateString('bn-BD', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })
+      : new Date().toLocaleDateString('bn-BD', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        });
+    const isoDate = noteDate || new Date().toISOString();
+
+    const yamlFrontmatter = [
+      '---',
+      `title: "${cleanTitle.replace(/"/g, '\\"')}"`,
+      `date: "${isoDate}"`,
+      noteFolderName ? `folder: "${noteFolderName.replace(/"/g, '\\"')}"` : null,
+      noteCategories && noteCategories.length > 0
+        ? `categories:\n${noteCategories.map((c) => `  - "${c.replace(/"/g, '\\"')}"`).join('\n')}`
+        : null,
+      noteTags && noteTags.length > 0
+        ? `tags:\n${noteTags.map((t) => `  - "${t.replace(/"/g, '\\"')}"`).join('\n')}`
+        : null,
+      `archived: ${Boolean(noteIsArchived)}`,
+      '---',
+      '',
     ]
-      .filter(Boolean)
+      .filter((line) => line !== null)
       .join('\n');
 
-    const fullContent = `${metaHeader}${content}`;
-    const blob = new Blob([fullContent], { type: 'text/markdown;charset=utf-8;' });
+    const markdownHeader = [
+      `# ${cleanTitle}`,
+      '',
+      `> 📅 **তারিখ**: ${dateStr}`,
+      noteFolderName ? `> 📁 **ফোল্ডার**: ${noteFolderName}` : null,
+      noteCategories && noteCategories.length > 0
+        ? `> 🏷️ **ক্যাটাগরি**: ${noteCategories.join(', ')}`
+        : null,
+      noteTags && noteTags.length > 0
+        ? `> 🔖 **ট্যাগ**: ${noteTags.map((t) => `#${t}`).join(' ')}`
+        : null,
+      noteIsArchived ? `> 📦 **অবস্থা**: আর্কাইভকৃত (Archived)` : null,
+      '',
+      '---',
+      '',
+    ]
+      .filter((line) => line !== null)
+      .join('\n');
+
+    return `${yamlFrontmatter}${markdownHeader}${noteContent || '_কোনো বিবরণ লেখা হয়নি_'}\n`;
+  };
+
+  // Export current active note as Markdown file
+  const handleExportMarkdownFile = () => {
+    const mdText = generateMarkdownForNote(
+      title,
+      content,
+      categories,
+      folderName,
+      tags,
+      isArchived,
+      new Date().toISOString()
+    );
+    const blob = new Blob([mdText], { type: 'text/markdown;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
+    const cleanFilename = (title.trim() || 'note')
+      .replace(/[\/\\?%*:|"<>]/g, '_')
+      .replace(/\s+/g, '_');
     link.href = url;
-    link.download = `${title.replace(/\s+/g, '_') || 'note'}.md`;
+    link.download = `${cleanFilename}.md`;
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
     URL.revokeObjectURL(url);
+    showToast(`"${title || 'নোট'}" সফলভাবে Markdown (.md) ফাইল হিসেবে ডাউনলোড হয়েছে`);
+  };
+
+  // Backwards compatibility alias
+  const handleExportNote = handleExportMarkdownFile;
+
+  // Copy note as Markdown to clipboard
+  const handleCopyMarkdown = async () => {
+    const mdText = generateMarkdownForNote(
+      title,
+      content,
+      categories,
+      folderName,
+      tags,
+      isArchived,
+      new Date().toISOString()
+    );
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(mdText);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = mdText;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setIsCopiedMarkdown(true);
+      setTimeout(() => setIsCopiedMarkdown(false), 2500);
+      showToast('নোটের Markdown সফলভাবে ক্লিপবোর্ডে কপি করা হয়েছে');
+    } catch (e) {
+      showToast('ক্লিপবোর্ডে কপি করতে সমস্যা হয়েছে');
+    }
+  };
+
+  // Share note via Web Share API or fallback to clipboard
+  const handleShareNote = async () => {
+    const mdText = generateMarkdownForNote(
+      title,
+      content,
+      categories,
+      folderName,
+      tags,
+      isArchived,
+      new Date().toISOString()
+    );
+    const shareTitle = title.trim() || 'স্মার্ট নোট';
+
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({
+          title: shareTitle,
+          text: mdText,
+        });
+        showToast('নোটটি সফলভাবে শেয়ার করা হয়েছে');
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          await handleCopyMarkdown();
+        }
+      }
+    } else {
+      await handleCopyMarkdown();
+    }
+  };
+
+  // Export specific note (from card list)
+  const exportSpecificNote = (targetNote: SmartNote) => {
+    const noteCats =
+      targetNote.categories && Array.isArray(targetNote.categories) && targetNote.categories.length > 0
+        ? targetNote.categories
+        : targetNote.category
+        ? [targetNote.category]
+        : [];
+    const mdText = generateMarkdownForNote(
+      targetNote.title || 'শিরোনামহীন নোট',
+      targetNote.content || '',
+      noteCats,
+      targetNote.folderName,
+      targetNote.tags || [],
+      targetNote.isArchived,
+      targetNote.updatedAt || targetNote.createdAt
+    );
+    const blob = new Blob([mdText], { type: 'text/markdown;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const cleanFilename = (targetNote.title || 'note')
+      .trim()
+      .replace(/[\/\\?%*:|"<>]/g, '_')
+      .replace(/\s+/g, '_');
+    link.href = url;
+    link.download = `${cleanFilename}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`"${targetNote.title || 'নোট'}" সফলভাবে ডাউনলোড হয়েছে`);
   };
 
   // Calculate unique categories across all notes
@@ -1917,6 +2092,19 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                           </span>
                         )}
 
+                        {/* Quick Card Export Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            exportSpecificNote(note);
+                          }}
+                          className="p-1 rounded-lg transition opacity-80 group-hover:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400"
+                          title="Markdown (.md) ডাউনলোড করুন"
+                        >
+                          <FileDown className="w-3.5 h-3.5" />
+                        </button>
+
                         {/* Quick Card Archive / Unarchive Button */}
                         <button
                           type="button"
@@ -2113,53 +2301,152 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                   )}
                 </div>
 
-                {/* Speech Recognition (Voice-to-Text) Button and Options */}
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={toggleSpeechRecognition}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer shadow-2xs ${
-                      isListening
-                        ? 'bg-rose-600 text-white ring-2 ring-rose-400/50 shadow-md animate-pulse'
-                        : 'bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80'
-                    }`}
-                    title="স্পিচ রিকগনিশন (Voice Input) চালু করুন"
-                  >
-                    {isListening ? (
-                      <>
-                        <Radio className="w-3.5 h-3.5 animate-spin" />
-                        <span>রেকর্ডিং হচ্ছে</span>
-                      </>
-                    ) : (
-                      <>
-                        <Mic className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                        <span>ভয়েস টাইপিং</span>
-                      </>
+                {/* Middle Left: Voice-to-Text and Markdown Export Toolbar */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Speech Recognition (Voice-to-Text) Button and Options */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={toggleSpeechRecognition}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer shadow-2xs ${
+                        isListening
+                          ? 'bg-rose-600 text-white ring-2 ring-rose-400/50 shadow-md animate-pulse'
+                          : 'bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80'
+                      }`}
+                      title="স্পিচ রিকগনিশন (Voice Input) চালু করুন"
+                    >
+                      {isListening ? (
+                        <>
+                          <Radio className="w-3.5 h-3.5 animate-spin" />
+                          <span>রেকর্ডিং হচ্ছে</span>
+                        </>
+                      ) : (
+                        <>
+                          <Mic className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                          <span>ভয়েস টাইপিং</span>
+                        </>
+                      )}
+                    </button>
+
+                    {/* Speech Language & Target Selector Toggle */}
+                    <select
+                      value={speechLang}
+                      onChange={(e) => setSpeechLang(e.target.value as 'bn-BD' | 'en-US')}
+                      disabled={isListening}
+                      className="text-[11px] border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
+                      title="ভয়েস ভাষা নির্বাচন করুন"
+                    >
+                      <option value="bn-BD">🇧🇩 বাংলা</option>
+                      <option value="en-US">🇺🇸 English</option>
+                    </select>
+
+                    <select
+                      value={speechTarget}
+                      onChange={(e) => setSpeechTarget(e.target.value as 'content' | 'title')}
+                      disabled={isListening}
+                      className="text-[11px] border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer hidden sm:block"
+                      title="ভয়েস লেখার স্থান"
+                    >
+                      <option value="content">বডিতে লিখুন</option>
+                      <option value="title">শিরোনামে লিখুন</option>
+                    </select>
+                  </div>
+
+                  {/* Dedicated Markdown Export & Share Dropdown Button */}
+                  <div className="relative" ref={exportMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => setIsExportMenuOpen((prev) => !prev)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/80 transition cursor-pointer shadow-2xs"
+                      title="নোটটি Markdown (.md) হিসেবে ডাউনলোড বা শেয়ার করুন"
+                    >
+                      <FileDown className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      <span>Markdown এক্সপোর্ট</span>
+                      <ChevronDown
+                        className={`w-3 h-3 text-emerald-600 dark:text-emerald-400 transition-transform ${
+                          isExportMenuOpen ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </button>
+
+                    {/* Export & Sharing Options Dropdown Menu */}
+                    {isExportMenuOpen && (
+                      <div className="absolute left-0 sm:right-0 sm:left-auto top-full mt-1.5 w-64 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 p-1.5 z-40 animate-in fade-in zoom-in-95 duration-100">
+                        <div className="px-2.5 py-1.5 border-b border-slate-100 dark:border-slate-800 mb-1">
+                          <p className="text-[11px] font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider">
+                            Markdown (.md) এক্সপোর্ট
+                          </p>
+                          <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                            মেটাডাটা, ক্যাটাগরি ও ট্যাগসহ
+                          </p>
+                        </div>
+
+                        {/* Option 1: Download .md File */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleExportMarkdownFile();
+                            setIsExportMenuOpen(false);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 hover:text-emerald-700 dark:hover:text-emerald-300 transition cursor-pointer"
+                        >
+                          <div className="p-1.5 rounded-md bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 dark:text-emerald-400 flex-shrink-0">
+                            <Download className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-semibold block truncate">Markdown (.md) ডাউনলোড</span>
+                            <span className="text-[10px] text-slate-400 dark:text-slate-500 block truncate">
+                              ডিভাইসে ফাইল সেভ করুন
+                            </span>
+                          </div>
+                        </button>
+
+                        {/* Option 2: Copy Markdown to Clipboard */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleCopyMarkdown();
+                            setIsExportMenuOpen(false);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 hover:text-indigo-700 dark:hover:text-indigo-300 transition cursor-pointer"
+                        >
+                          <div className="p-1.5 rounded-md bg-indigo-100 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-400 flex-shrink-0">
+                            {isCopiedMarkdown ? (
+                              <Check className="w-4 h-4 text-emerald-600" />
+                            ) : (
+                              <Copy className="w-4 h-4" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-semibold block truncate">Markdown টেক্সট কপি</span>
+                            <span className="text-[10px] text-slate-400 dark:text-slate-500 block truncate">
+                              ক্লিপবোর্ডে কপি করে শেয়ার করুন
+                            </span>
+                          </div>
+                        </button>
+
+                        {/* Option 3: Share Note */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleShareNote();
+                            setIsExportMenuOpen(false);
+                          }}
+                          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-purple-50 dark:hover:bg-purple-950/50 hover:text-purple-700 dark:hover:text-purple-300 transition cursor-pointer"
+                        >
+                          <div className="p-1.5 rounded-md bg-purple-100 dark:bg-purple-900/60 text-purple-600 dark:text-purple-400 flex-shrink-0">
+                            <Share2 className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-semibold block truncate">সরাসরি শেয়ার করুন</span>
+                            <span className="text-[10px] text-slate-400 dark:text-slate-500 block truncate">
+                              WhatsApp, Mail বা সোশ্যাল অ্যাপে
+                            </span>
+                          </div>
+                        </button>
+                      </div>
                     )}
-                  </button>
-
-                  {/* Speech Language & Target Selector Toggle */}
-                  <select
-                    value={speechLang}
-                    onChange={(e) => setSpeechLang(e.target.value as 'bn-BD' | 'en-US')}
-                    disabled={isListening}
-                    className="text-[11px] border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
-                    title="ভয়েস ভাষা নির্বাচন করুন"
-                  >
-                    <option value="bn-BD">🇧🇩 বাংলা</option>
-                    <option value="en-US">🇺🇸 English</option>
-                  </select>
-
-                  <select
-                    value={speechTarget}
-                    onChange={(e) => setSpeechTarget(e.target.value as 'content' | 'title')}
-                    disabled={isListening}
-                    className="text-[11px] border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer hidden sm:block"
-                    title="ভয়েস লেখার স্থান"
-                  >
-                    <option value="content">বডিতে লিখুন</option>
-                    <option value="title">শিরোনামে লিখুন</option>
-                  </select>
+                  </div>
                 </div>
 
                 {/* Color Selector */}
@@ -2215,12 +2502,13 @@ export const SmartNotesTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAut
                     <Copy className="w-4 h-4" />
                   </button>
 
+                  {/* Quick Markdown Export Button */}
                   <button
-                    onClick={handleExportNote}
-                    className="p-2 rounded-xl text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition cursor-pointer"
-                    title="ডাউনলোড করুন (.md)"
+                    onClick={handleExportMarkdownFile}
+                    className="p-2 rounded-xl text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition cursor-pointer"
+                    title="Markdown (.md) ফাইল ডাউনলোড করুন"
                   >
-                    <Download className="w-4 h-4" />
+                    <FileDown className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   </button>
 
                   <button

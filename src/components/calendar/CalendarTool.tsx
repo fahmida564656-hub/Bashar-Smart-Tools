@@ -27,7 +27,11 @@ import {
   Check,
   AlertCircle,
   Tag,
-  CalendarCheck
+  CalendarCheck,
+  GripVertical,
+  Move,
+  Sparkles,
+  CheckCheck
 } from 'lucide-react';
 
 export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth }) => {
@@ -46,6 +50,12 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  // Drag and Drop State
+  const [draggedEvent, setDraggedEvent] = useState<CalendarEvent | null>(null);
+  const [dragOverDate, setDragOverDate] = useState<string | null>(null);
+  const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null);
+  const [dragToast, setDragToast] = useState<string | null>(null);
 
   // Modal State for Add / Edit
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -188,6 +198,149 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
     setCategory(event.category || 'কাজ (Work)');
     setColor(event.color || 'indigo');
     setIsModalOpen(true);
+  };
+
+  // Show Drag Notification Toast
+  const showDragToast = (msg: string) => {
+    setDragToast(msg);
+    setTimeout(() => {
+      setDragToast(null);
+    }, 3500);
+  };
+
+  // Drag Handlers
+  const handleDragStart = (e: React.DragEvent, event: CalendarEvent) => {
+    setDraggedEvent(event);
+    e.dataTransfer.setData('text/plain', event.id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnd = () => {
+    setDraggedEvent(null);
+    setDragOverDate(null);
+    setDragOverTaskId(null);
+  };
+
+  const handleDragOverDate = (e: React.DragEvent, dateStr: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverDate !== dateStr) {
+      setDragOverDate(dateStr);
+    }
+  };
+
+  const handleDragLeaveDate = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOverDate(null);
+  };
+
+  const handleDropOnDate = async (e: React.DragEvent, targetDateStr: string) => {
+    e.preventDefault();
+    setDragOverDate(null);
+
+    if (!draggedEvent) return;
+    if (draggedEvent.date === targetDateStr) {
+      setDraggedEvent(null);
+      return;
+    }
+
+    const eventToMove = draggedEvent;
+    const nowIso = new Date().toISOString();
+
+    // Optimistic local state update
+    setEvents((prev) =>
+      prev.map((ev) =>
+        ev.id === eventToMove.id ? { ...ev, date: targetDateStr, updatedAt: nowIso } : ev
+      )
+    );
+    setSelectedDateStr(targetDateStr);
+
+    if (user) {
+      if (auth.currentUser) {
+        try {
+          const docRef = doc(db, 'users', user.uid, 'calendarEvents', eventToMove.id);
+          await updateDoc(docRef, {
+            date: targetDateStr,
+            updatedAt: nowIso,
+          });
+        } catch (err) {
+          console.error('Failed to move task date:', err);
+        }
+      } else {
+        const userKey = `bashar_events_${user.uid}`;
+        try {
+          const saved = localStorage.getItem(userKey);
+          if (saved) {
+            const list: CalendarEvent[] = JSON.parse(saved);
+            const updated = list.map((ev) =>
+              ev.id === eventToMove.id ? { ...ev, date: targetDateStr, updatedAt: nowIso } : ev
+            );
+            localStorage.setItem(userKey, JSON.stringify(updated));
+          }
+        } catch (err) {}
+      }
+    }
+
+    const formattedTargetDate = new Date(targetDateStr).toLocaleDateString('bn-BD', {
+      month: 'short',
+      day: 'numeric',
+    });
+    showDragToast(`"${eventToMove.title}" সফলভাবে ${formattedTargetDate}-এ স্থানান্তরিত হয়েছে!`);
+    setDraggedEvent(null);
+  };
+
+  const handleDragOverTask = (e: React.DragEvent, targetTaskId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverTaskId !== targetTaskId) {
+      setDragOverTaskId(targetTaskId);
+    }
+  };
+
+  const handleDropOnTask = async (e: React.DragEvent, targetTaskId: string) => {
+    e.preventDefault();
+    setDragOverTaskId(null);
+
+    if (!draggedEvent || draggedEvent.id === targetTaskId) {
+      setDraggedEvent(null);
+      return;
+    }
+
+    const movedEvent = draggedEvent;
+    setEvents((prev) => {
+      const fromIndex = prev.findIndex((ev) => ev.id === movedEvent.id);
+      const toIndex = prev.findIndex((ev) => ev.id === targetTaskId);
+      if (fromIndex === -1 || toIndex === -1) return prev;
+
+      const targetTask = prev[toIndex];
+      const newDate = targetTask.date;
+      const nowIso = new Date().toISOString();
+
+      const updated = [...prev];
+      const [movedItem] = updated.splice(fromIndex, 1);
+      movedItem.date = newDate;
+      movedItem.updatedAt = nowIso;
+      updated.splice(toIndex, 0, movedItem);
+
+      if (user) {
+        if (!auth.currentUser) {
+          const userKey = `bashar_events_${user.uid}`;
+          try {
+            localStorage.setItem(userKey, JSON.stringify(updated));
+          } catch (e) {}
+        } else if (movedItem.date !== movedEvent.date) {
+          updateDoc(doc(db, 'users', user.uid, 'calendarEvents', movedItem.id), {
+            date: newDate,
+            updatedAt: nowIso,
+          }).catch(console.error);
+        }
+      }
+
+      return updated;
+    });
+
+    showDragToast(`"${movedEvent.title}" কাজের ক্রম পুনর্বিন্যাস করা হয়েছে`);
+    setDraggedEvent(null);
   };
 
   // Save or Update event
@@ -458,6 +611,21 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
               </div>
             </div>
 
+            {/* Drag and Drop Smart Guide Banner */}
+            <div className="mb-4 p-2.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 flex items-center justify-between gap-3 text-xs text-indigo-900 dark:text-indigo-200">
+              <div className="flex items-center gap-2">
+                <Move className="w-4 h-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+                <span className="text-[11px] sm:text-xs">
+                  <strong>ড্র্যাগ-অ্যান্ড-ড্রপ:</strong> যেকোনো টাস্ক কার্ড ড্র্যাগ করে ক্যালেন্ডারের অন্য তারিখে ছেড়ে সরাসরি তারিখ পরিবর্তন করুন।
+                </span>
+              </div>
+              {draggedEvent && (
+                <span className="px-2 py-0.5 rounded-md bg-indigo-600 text-white font-bold text-[10px] animate-pulse whitespace-nowrap">
+                  তারিখে ড্রপ করুন...
+                </span>
+              )}
+            </div>
+
             {/* Weekday Labels */}
             <div className="grid grid-cols-7 gap-1 text-center font-semibold text-xs text-slate-400 dark:text-slate-500 mb-2">
               <div>রবি (Sun)</div>
@@ -482,14 +650,20 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
                 const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
                 const isToday = dateStr === todayStr;
                 const isSelected = dateStr === selectedDateStr;
+                const isDragOver = dragOverDate === dateStr;
                 const dayEventsList = filteredEvents.filter((ev) => ev.date === dateStr);
 
                 return (
                   <div
                     key={dayNum}
                     onClick={() => setSelectedDateStr(dateStr)}
-                    className={`h-20 sm:h-24 p-1.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
-                      isSelected
+                    onDragOver={(e) => handleDragOverDate(e, dateStr)}
+                    onDragLeave={handleDragLeaveDate}
+                    onDrop={(e) => handleDropOnDate(e, dateStr)}
+                    className={`h-20 sm:h-24 p-1.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between relative ${
+                      isDragOver
+                        ? 'border-indigo-600 dark:border-indigo-400 bg-indigo-100/90 dark:bg-indigo-950/80 ring-4 ring-indigo-400/60 scale-[1.04] shadow-xl z-20'
+                        : isSelected
                         ? 'border-indigo-600 dark:border-indigo-500 bg-indigo-50/40 dark:bg-indigo-950/40 ring-2 ring-indigo-200 dark:ring-indigo-800'
                         : isToday
                         ? 'border-indigo-300 dark:border-indigo-700 bg-indigo-50/20 dark:bg-indigo-950/20'
@@ -508,11 +682,15 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
                       >
                         {dayNum}
                       </span>
-                      {dayEventsList.length > 0 && (
+                      {isDragOver ? (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-600 text-white animate-pulse">
+                          ছাড়ুন
+                        </span>
+                      ) : dayEventsList.length > 0 ? (
                         <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
                           {dayEventsList.length}
                         </span>
-                      )}
+                      ) : null}
                     </div>
 
                     {/* Mini event tags */}
@@ -520,13 +698,20 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
                       {dayEventsList.slice(0, 2).map((ev) => (
                         <div
                           key={ev.id}
-                          className={`text-[10px] font-medium px-1 py-0.5 rounded truncate ${
+                          draggable={true}
+                          onDragStart={(e) => {
+                            e.stopPropagation();
+                            handleDragStart(e, ev);
+                          }}
+                          onDragEnd={handleDragEnd}
+                          className={`text-[10px] font-medium px-1 py-0.5 rounded truncate cursor-grab active:cursor-grabbing hover:opacity-80 transition ${
                             ev.status === 'completed'
                               ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 line-through'
                               : ev.priority === 'high'
                               ? 'bg-rose-50 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300'
                               : 'bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300'
                           }`}
+                          title={`ড্র্যাগ করে অন্য তারিখে নিন: ${ev.title}`}
                         >
                           {ev.title}
                         </div>
@@ -635,6 +820,39 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
               </button>
             </div>
 
+            {/* Task Progress Bar */}
+            {selectedDateEvents.length > 0 && (
+              <div className="mb-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <CheckCheck className="w-3.5 h-3.5 text-emerald-500" />
+                    কাজের অগ্রগতি
+                  </span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                    {selectedDateEvents.filter((e) => e.status === 'completed').length} / {selectedDateEvents.length} সম্পন্ন (
+                    {Math.round(
+                      (selectedDateEvents.filter((e) => e.status === 'completed').length /
+                        selectedDateEvents.length) *
+                        100
+                    )}
+                    %)
+                  </span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-500 transition-all duration-300"
+                    style={{
+                      width: `${Math.round(
+                        (selectedDateEvents.filter((e) => e.status === 'completed').length /
+                          selectedDateEvents.length) *
+                          100
+                      )}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
             {loading ? (
               <div className="py-8 text-center text-slate-400">
                 <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
@@ -646,7 +864,7 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
                 <p className="text-xs font-medium text-slate-600 dark:text-slate-300">এই তারিখে কোনো কাজ নেই</p>
                 <button
                   onClick={() => openNewEventModal(selectedDateStr)}
-                  className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 font-semibold hover:underline"
+                  className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 font-semibold hover:underline cursor-pointer"
                 >
                   + নতুন কাজ তৈরি করুন
                 </button>
@@ -655,12 +873,23 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
               <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
                 {selectedDateEvents.map((ev) => {
                   const isDone = ev.status === 'completed';
+                  const isDraggingThis = draggedEvent?.id === ev.id;
+                  const isOverThis = dragOverTaskId === ev.id;
 
                   return (
                     <div
                       key={ev.id}
-                      className={`p-3.5 rounded-xl border transition-all ${
-                        isDone
+                      draggable={true}
+                      onDragStart={(e) => handleDragStart(e, ev)}
+                      onDragEnd={handleDragEnd}
+                      onDragOver={(e) => handleDragOverTask(e, ev.id)}
+                      onDrop={(e) => handleDropOnTask(e, ev.id)}
+                      className={`p-3.5 rounded-xl border transition-all cursor-grab active:cursor-grabbing group relative ${
+                        isDraggingThis
+                          ? 'opacity-40 border-dashed border-indigo-500 scale-95 shadow-inner'
+                          : isOverThis
+                          ? 'border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/70 ring-2 ring-indigo-400'
+                          : isDone
                           ? 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 opacity-70'
                           : ev.priority === 'high'
                           ? 'bg-rose-50/50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/60'
@@ -668,6 +897,8 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
                       }`}
                     >
                       <div className="flex items-start gap-2.5">
+                        <GripVertical className="w-4 h-4 text-slate-300 dark:text-slate-600 group-hover:text-indigo-500 flex-shrink-0 mt-0.5 transition" />
+
                         <button
                           onClick={() => handleToggleStatus(ev)}
                           className="mt-0.5 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition cursor-pointer"
@@ -882,6 +1113,14 @@ export const CalendarTool: React.FC<{ onOpenAuth: () => void }> = ({ onOpenAuth 
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Drag Notification Toast */}
+      {dragToast && (
+        <div className="fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl bg-slate-900/95 text-white shadow-2xl border border-slate-700 text-xs flex items-center gap-2.5 animate-in slide-in-from-bottom duration-200 backdrop-blur-sm">
+          <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+          <span>{dragToast}</span>
         </div>
       )}
     </div>
